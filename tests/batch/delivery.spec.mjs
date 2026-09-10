@@ -8,6 +8,10 @@ test('delivery: tag qualification has a reusable target and never enables public
   const tag = await readFile(new URL('.github/workflows/publish.yml', root), 'utf8');
   const triggers = /^on:\s*\r?\n([\s\S]*?)(?=^\S)/m.exec(workflow)?.[1];
   assert.match(triggers ?? '', /^  workflow_call:\s*$/m);
+  // runner context exists in step.env, not in job.env during workflow planning.
+  assert.doesNotMatch(workflow.split(/^    steps:\s*$/m)[0], /\$\{\{\s*runner\./);
+  const redisStepEnvs = workflow.match(/^        env:\s*\r?\n          QUEUEBIT_BATCH_REDIS_BINARY: \$\{\{ runner\.temp \}\}\/queuebit-redis\/root\/usr\/bin\/redis-server\s*$/gm);
+  assert.equal(redisStepEnvs?.length, 2, 'Redis extraction and qualification both need the step-scoped binary');
   assert.match(tag, /uses: \.\/\.github\/workflows\/batch-core\.yml/);
   for (const file of [workflow, tag]) {
     assert.match(file, /contents: read/);

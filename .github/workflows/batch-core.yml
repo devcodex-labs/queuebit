@@ -17,8 +17,6 @@ jobs:
       fail-fast: false
       matrix:
         node: ['22.23.2', '24.17.0']
-    env:
-      QUEUEBIT_BATCH_REDIS_BINARY: ${{ runner.temp }}/queuebit-redis/root/usr/bin/redis-server
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +29,8 @@ jobs:
       - run: npm --prefix website ci
       - name: Extract verified Redis 7.2.16 without changing system services
         shell: bash
+        env:
+          QUEUEBIT_BATCH_REDIS_BINARY: ${{ runner.temp }}/queuebit-redis/root/usr/bin/redis-server
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/queuebit-redis/root"
@@ -43,6 +43,8 @@ jobs:
           dpkg-deb --extract server.deb root
           "$QUEUEBIT_BATCH_REDIS_BINARY" --version
       - name: Run all required core, fresh package, TLS, three-Sentinel, example and documentation qualifications
+        env:
+          QUEUEBIT_BATCH_REDIS_BINARY: ${{ runner.temp }}/queuebit-redis/root/usr/bin/redis-server
         run: npm test
       - name: Confirm every owned fixture released its service port
         if: always()
