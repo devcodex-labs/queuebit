@@ -6,13 +6,13 @@ export default function A11yLabels() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const copy = language === 'zh'
     ? {
-        title: 'v0.1 预览文档',
-        detail: '本站描述 Queuebit v0.1 计划稳定的使用方式；当前安装版本请以 npm 包和发布说明为准。',
+        title: 'Batch v2 · 未发布',
+        detail: '本站对应当前源码中的 BatchQueue 接口；请安装本地根包，npm 历史版本不适用。',
         closeMenu: '关闭文档菜单'
       }
     : {
-        title: 'v0.1 preview documentation',
-        detail: 'This site describes the intended stable Queuebit v0.1 usage; check the installed npm package and release notes for current availability.',
+        title: 'Batch v2 · Unreleased',
+        detail: 'This manual matches the BatchQueue source tree. Install its local root tarball; historical npm releases do not implement this API.',
         closeMenu: 'Close documentation menu'
       };
 

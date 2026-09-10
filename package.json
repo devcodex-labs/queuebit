@@ -1,32 +1,29 @@
 {
     "name": "queuebit",
     "version": "0.0.5",
-    "description": "Redis-only distributed job queue for Node.js and vext.",
+    "description": "Redis-backed durable batch processing for Node.js.",
     "type": "module",
     "license": "Apache-2.0",
     "author": "VextJS",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "bin": {
-        "queuebit": "./dist/cli.js"
-    },
     "exports": {
         ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js",
-            "require": "./dist/index.cjs"
-        },
-        "./vext": {
-            "types": "./dist/vext/index.d.ts",
-            "import": "./dist/vext/index.js",
-            "require": "./dist/vext/index.cjs"
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
         },
         "./package.json": "./package.json"
     },
     "sideEffects": false,
     "engines": {
-        "node": ">=20"
+        "node": ">=22"
     },
     "repository": {
         "type": "git",
@@ -38,12 +35,29 @@
     "homepage": "https://github.com/devcodex-labs/queuebit#readme",
     "scripts": {
         "build": "tsup",
+        "build:batch": "tsup --config tsup.batch.config.ts",
+        "build:batch:package": "npm run build",
+        "test:batch:consumers": "npm run build:batch:package && node --test --test-reporter=spec tests/batch/consumers.spec.mjs",
+        "test:batch:tls": "npm run build:batch:package && node --test --test-reporter=spec tests/batch/tls.spec.mjs",
+        "test:batch:sentinel": "npm run build:batch && npm run build:batch:package && node --test --test-reporter=spec tests/batch/sentinel.spec.mjs",
+        "test:batch:docs": "npm run build:batch:package && node --test --test-reporter=spec tests/batch/docs.spec.mjs",
+        "test:batch:release": "node tests/batch/qualification.mjs",
+        "test:batch:input": "npm run build:batch && node --test tests/batch/input.spec.mjs && tsc --noEmit --strict --exactOptionalPropertyTypes --noUncheckedIndexedAccess --target ES2023 --module NodeNext --moduleResolution NodeNext tests/batch/types.fixture.ts",
+        "test:batch:redis": "npm run build:batch && node --test tests/batch/storage.spec.mjs",
+        "test:batch:runtime": "npm run build:batch && node --expose-gc --test --test-concurrency=1 tests/batch/runtime.spec.mjs tests/batch/lifecycle.spec.mjs",
+        "test:batch:faults": "npm run build:batch && node --test --test-concurrency=1 tests/batch/faults.spec.mjs",
+        "test:batch:operator": "npm run build:batch && node --test --test-concurrency=1 tests/batch/operator-input.spec.mjs tests/batch/operator.spec.mjs tests/batch/listing.spec.mjs && tsc --noEmit --strict --exactOptionalPropertyTypes --noUncheckedIndexedAccess --target ES2023 --module NodeNext --moduleResolution NodeNext tests/batch/types.fixture.ts",
+        "test:batch:maintenance": "npm run build:batch && node --test --test-concurrency=1 tests/batch/maintenance.spec.mjs tests/batch/registry.spec.mjs tests/batch/capacity.spec.mjs",
+        "test:batch:telemetry": "npm run build:batch && node --test --test-concurrency=1 tests/batch/telemetry.spec.mjs",
+        "test:batch:operations": "npm run build:batch && node --expose-gc --test --test-concurrency=1 tests/batch/operations-faults.spec.mjs",
+        "test:batch:events": "npm run build:batch && node --test --test-concurrency=1 tests/batch/events-input.spec.mjs tests/batch/events.spec.mjs && tsc --noEmit --strict --exactOptionalPropertyTypes --noUncheckedIndexedAccess --target ES2023 --module NodeNext --moduleResolution NodeNext tests/batch/types.fixture.ts",
+        "test:batch:replay": "npm run build:batch && node --test --test-concurrency=1 tests/batch/replay.spec.mjs tests/batch/event-gc.spec.mjs tests/batch/dead-letters.spec.mjs",
+        "test:batch:callbacks": "npm run build:batch && node --expose-gc --test tests/batch/callback-runtime.spec.mjs",
+        "test:batch:deliveryfaults": "npm run build:batch && node --test tests/batch/callback-faults.spec.mjs",
+        "test:batch": "npm run build:batch && node --expose-gc --test --test-reporter=spec --test-concurrency=1 tests/batch/input.spec.mjs tests/batch/delivery.spec.mjs tests/batch/operator-input.spec.mjs tests/batch/operator.spec.mjs tests/batch/listing.spec.mjs tests/batch/storage.spec.mjs tests/batch/runtime.spec.mjs tests/batch/lifecycle.spec.mjs tests/batch/faults.spec.mjs tests/batch/maintenance.spec.mjs tests/batch/registry.spec.mjs tests/batch/capacity.spec.mjs tests/batch/telemetry.spec.mjs tests/batch/operations-faults.spec.mjs tests/batch/events-input.spec.mjs tests/batch/events.spec.mjs tests/batch/replay.spec.mjs tests/batch/event-gc.spec.mjs tests/batch/callback-runtime.spec.mjs tests/batch/dead-letters.spec.mjs tests/batch/callback-faults.spec.mjs && tsc --noEmit --strict --exactOptionalPropertyTypes --noUncheckedIndexedAccess --target ES2023 --module NodeNext --moduleResolution NodeNext tests/batch/types.fixture.ts",
         "typecheck": "tsc --noEmit",
-        "typecheck:examples": "tsc -p examples/receipt-batch-vext/tsconfig.json --noEmit",
-        "test": "npm run build && node --test tests",
-        "test:redis": "npm run build && node --test tests/redis-integration.test.mjs",
-        "test:redis:faults": "npm run build && node --test tests/redis-fault-injection.test.mjs",
-        "test:redis:sentinel": "npm run build && node --test tests/redis-sentinel.test.mjs",
+        "typecheck:examples": "npm run test:batch:docs",
+        "test": "npm run test:batch:release",
         "docs:dev": "npm run docs:build && npm --prefix website run dev",
         "docs:edit": "npm --prefix website run edit",
         "docs:build": "npm --prefix website run build",
@@ -53,9 +67,9 @@
     },
     "keywords": [
         "queue",
-        "jobs",
-        "task-queue",
-        "vextjs"
+        "batch-processing",
+        "redis",
+        "background-tasks"
     ],
     "files": [
         "dist",
@@ -66,26 +80,13 @@
         "access": "public"
     },
     "dependencies": {
-        "@redis/client": "^6.1.0",
-        "ajv": "^8.20.0",
-        "ajv-formats": "^3.0.1",
-        "typescript": "^5.8.3"
-    },
-    "overrides": {
-        "fast-uri": "3.1.5"
-    },
-    "peerDependencies": {
-        "vextjs": "0.3.26"
-    },
-    "peerDependenciesMeta": {
-        "vextjs": {
-            "optional": true
-        }
+        "@redis/client": "6.1.0"
     },
     "devDependencies": {
         "@types/node": "^20.19.43",
         "esbuild": "0.27.2",
         "tsup": "^8.5.1",
-        "vextjs": "0.3.26"
-    }
+        "typescript": "5.8.3"
+    },
+    "private": true
 }

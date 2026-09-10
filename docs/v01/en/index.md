@@ -2,42 +2,42 @@
 pageType: home
 hero:
   name: queuebit
-  text: Redis-backed Node job queue
-  tagline: Install the module, pass Redis config, register one processor, and call jobs.add so a background Worker can run slow work.
+  text: Durable batch processing for Node.js
+  tagline: Process a fixed business snapshot in bounded pages, recover progress in Redis, and deliver callbacks safely.
   actions:
     - theme: brand
-      text: Run one background job
+      text: Start your first batch
       link: /quick-start.html
     - theme: alt
-      text: See job usage
-      link: /job-recipes.html
+      text: Process business records
+      link: /batch-runs.html
     - theme: alt
       text: Read the learning path
       link: /concepts.html
 features:
-  - title: The first job takes five steps
-    details: Install, configure Redis, write a processor, call jobs.add, start a Worker, then inspect the job.
+  - title: Start with a real snapshot
+    details: Install the local root package, connect Redis, register the receipt task, supply durable adapters and observe its Run.
     link: /quick-start.html
-  - title: Normal jobs use jobs.add
-    details: Web/API submits one payload, and a Worker runs the matching processor. Do not start with BatchRun.
+  - title: Bounded work uses one task
+    details: Admit a finite query and let a managed consumer advance each page from committed state.
     link: /job-recipes.html
-  - title: Common features open gradually
-    details: Add retry, timeout, delay, idempotency, and cancel only when the task needs them.
+  - title: Learn as your task grows
+    details: Understand finite retries, cooperative timeouts, business idempotency and operator controls.
     link: /concepts.html
-  - title: Database batches are advanced
-    details: Use BatchRun only when work must page a database, record batch/final completion, and recover progress.
+  - title: Keep pages small and recoverable
+    details: Freeze input membership and payload, write idempotently and commit a keyset cursor after each page.
     link: /batch-runs.html
-  - title: Multiple Workers are for scale
-    details: Start with one Worker, then add processes sharing Redis and the queue when throughput needs it.
+  - title: Scale independent consumers
+    details: Share namespace and immutable contracts, then tune local execution and callback slots to downstream capacity.
     link: /distributed-workers.html
-  - title: vext is just a host
-    details: vext Web creates work; Workers still run as explicit background processes.
+  - title: Keep your framework in charge
+    details: Your application owns authentication, lifecycle and hosting; no framework adapter is required.
     link: /vext-integration.html
   - title: Operations stay out of the first path
     details: Production deployment, capacity, alerts, and recovery live under Production, not in the first integration path.
     link: /failure-runbooks.html
 ---
 
-<span class="manual-label">Home · v0.1 user manual</span>
+<span class="manual-label">Home · BatchQueue user manual</span>
 
-> **Release status:** This site describes the planned v0.1 usage model. Before installing, check the current npm package version and README release notes; if an example says a capability is not yet published, trust that message.
+> **Release status:** This manual matches the unreleased BatchQueue source tree. Install the local root tarball; historical npm releases do not implement this API. The v01 page URLs are retained, not legacy compatibility.

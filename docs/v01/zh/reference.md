@@ -1,41 +1,29 @@
 # 参考
 
-<span class="manual-label">参考 · 精确查询</span>
-
-本组页面用于查方法、字段、命令、状态和错误，不代替 [快速开始](./quick-start.md) 与用户任务页。
-
-## 版本状态
-
-当前页面记录 Queuebit v0.1 计划稳定的公开使用方式。实际 npm 包是否已经包含对应方法、配置字段和 CLI 命令，以你安装的版本和发布说明为准。
+<span class="manual-label">参考 · 第一次成功后按需精确查询</span>
 
 ## 按需求查找
 
-| 你要做什么 | 去哪里 |
+| 需求 | 页面 |
 |---|---|
-| 查 client/jobs/runs/completions 方法 | [API 快查](./target-api.md) |
-| 查 source/mapper/processor/completion runtime 契约 | [API 快查](./target-api.md#runtime-registration) |
-| 查配置类型、默认和互斥 | [配置字段字典](./cli-and-config.md) |
-| 查 start/inspect/control/drain 命令 | [CLI 参考](./cli-reference.md) |
-| 查 Job/Run/Completion 状态 | [状态和错误怎么读](./failure-modes.md) |
-| 查 Node/Redis/vext 能不能用 | [我的环境能不能用](./compatibility.md) |
-| 查事故现象的安全恢复 | [故障恢复](./failure-runbooks.md) |
+| 第一个真实业务批处理 | [快速开始](quick-start.md) |
+| 公开方法和类型 | [API快查](target-api.md) |
+| 完整行为与边界 | [Batch完整合同](batch-v2.md) |
+| 配置默认值 | [字段字典](cli-and-config.md) |
+| 支持环境 | [兼容范围](compatibility.md) |
+| 判断执行和投递失败 | [状态与错误](failure-modes.md) |
+| 控制任务或重放回调 | [运维](operations.md) |
+| 放进框架服务 | [框架托管](vext-integration.md) |
+| 从旧CLI链接进入 | [运维SDK，不提供CLI](cli-reference.md) |
 
 ## 公开命名快览
 
-| 域 | 稳定入口 |
-|---|---|
-| 创建 client | `createQueuebitClient(config, options?)`；兼容 `createQueuebitClient({ config, logger? })` |
-| 静态配置 | `defineQueuebitConfig()` |
-| 运行时注册 | `defineQueuebitRuntime()` + 具名 source/mapper/processor/completion helper |
-| 直接 Job | `queuebit.jobs.add/addBulk/get/list/cancel/retryFailed` |
-| BatchRun | `queuebit.runs.start/get/list/listFailures/pause/resume/cancel/retryFailed` |
-| Completion | `queuebit.completions.get/list/retry` |
-| 生命周期 | 宿主调用 `worker.drain()`、`coordinator.drain()` 或 `queuebit.close()`；可选 CLI 角色宿主收到 SIGTERM 时 drain |
+createBatchQueue创建Queue，define返回Task，start接收Run，ctx.next/end结算Batch，声明的handler投递Event。QueuebitError提供稳定错误/结果字段；只有根入口和package元数据可以导入。
 
-## 延期能力
+## 版本状态
 
-v0.1 不包含 repeatable/cron、DAG/Flows、Redis Cluster、非 Redis backend、priority、全局 rate limiter、partition/key ordering、Dashboard/Admin UI、CDC/无限数据源。不承诺 exactly-once、严格 FIFO、租户公平性或自动撤销外部副作用。
+手册对应未发布源码，历史npm版本不匹配。保留v01地址便于查找，不兼容已移除的API或数据。
 
 ## 维护者入口
 
-使用者不需要阅读 Redis key/Lua 或内部验收。实现者从 [架构说明](./architecture.md)、[Redis 模型](./redis-model.md)、[内部生命周期](./worker-lifecycle.md) 和 [开发合同](./development-contract.md) 开始。
+[架构](architecture.md) · [Redis模型](redis-model.md) · [生命周期](worker-lifecycle.md) · [验证](development-contract.md)

@@ -1,159 +1,45 @@
-# Run One Background Job
+# Run a Bounded Background Task
 
-<span class="manual-label">Quick start · one job from enqueue to completion</span>
+<span class="manual-label">Task guide · one admission contract for small and paged work</span>
 
-This page comes after [Quick start](./quick-start.md). Start with the smallest submit path: Web/API puts one payload into a Queue, and a Worker runs the processor with the same name. After that works, add retry, idempotency, delay, bulk submit, or failure recovery only when you need them.
+<span id="sc-bounded-task"></span>
 
-| Layer | What you need to know |
-|---|---|
-| Required | Queue name, processor name, payload, and a running Worker |
-| Common daily use | `attempts`, `timeoutMs`, `deduplicationKey`, `idempotencyKey` |
-| Use when needed | `delayMs`, `addBulk`, `cancel`, `retryFailed` |
-| Complex scenarios | Database paging, per-batch/final callbacks, and crash recovery belong in [BatchRun](./batch-runs.md) |
+## Start with the business boundary
 
-<span id="sc02-direct-job"></span>
-## Smallest Submit: No Options Yet
+For many records, use the [snapshot example](quick-start.md). For one already-bounded external operation, the same Task contract can finish in one page. There is no separate direct-job API.
 
 ```ts
-const job = await queuebit.jobs.add(
-  'notification',
-  'send-receipt',
-  {
-    schemaVersion: 1,
-    tenantId,
-    orderId,
-    recipient
-  }
+const task = queue.define<{ operationId: string }, null>(
+  { name: 'bounded-operation', version: '1', events: [] },
+  { async execute(ctx) {
+      await businessService.applyOnce(ctx.query.operationId, ctx.signal);
+      return ctx.end();
+  } },
 );
-
-return { jobId: job.id, state: job.state };
-```
-
-This code does one thing: it puts `send-receipt` into the `notification` queue. The payload comes from an authenticated, validated request plus server-side business lookup. It is not a hard-coded user. Return HTTP 202 and `jobId`; expose business results through a query endpoint or business state table.
-
-```bash
-npx queuebit job inspect <jobId> --config queuebit.config.ts
-```
-
-## Daily Development: When to Add Options
-
-Get the smallest submit working first, then add these options according to business risk:
-
-| Need | Add | Effect |
-|---|---|---|
-| Try again after failure | `attempts` + `backoff` | Retry network blips or 5xx responses |
-| Prevent endless execution | `timeoutMs` | Let Queuebit decide failure or retry after timeout |
-| Avoid duplicate enqueue for one business request | `deduplicationKey` | Same key and same payload return the same job |
-| Avoid duplicate email, webhook, or payment effects | `idempotencyKey` | Pass a side-effect key into the processor |
-
-```ts
-const job = await queuebit.jobs.add(
-  'notification',
-  'send-receipt',
-  { schemaVersion: 1, tenantId, orderId, recipient },
-  {
-    attempts: 3,
-    timeoutMs: 30_000,
-    deduplicationKey: `request:receipt:${tenantId}:${orderId}`,
-    idempotencyKey: `receipt:${tenantId}:${orderId}`
-  }
-);
-```
-
-Handle common submit failures like this:
-
-| What happened | Queuebit returns | What to do |
-|---|---|---|
-| Redis cannot be reached | `QB_REDIS_CONNECTION_FAILED`, retryable | Wait briefly, then submit again with the same `deduplicationKey` |
-| Same business request, different payload | `QB_JOB_DEDUPLICATION_CONFLICT`, HTTP 409 | Fix the business identity, such as `tenantId/orderId`; do not generate a random key to bypass the conflict |
-| Queue is too full | `QB_BACKPRESSURE_REJECTED`, HTTP 429 | Use the returned `details` and wait until the queue is below the recovery watermark |
-
-## Submit a Small Known Group: `addBulk`
-
-```ts
-const results = await queuebit.jobs.addBulk('notification', [
-  {
-    name: 'send-receipt',
-    data: { schemaVersion: 1, orderId: 1001, tenantId, recipient: 'a@example.com' },
-    options: {
-      deduplicationKey: `request:receipt:${tenantId}:1001`,
-      idempotencyKey: `receipt:${tenantId}:1001`
-    }
-  },
-  {
-    name: 'send-receipt',
-    data: { schemaVersion: 1, orderId: 1002, tenantId, recipient: 'b@example.com' },
-    options: {
-      deduplicationKey: `request:receipt:${tenantId}:1002`,
-      idempotencyKey: `receipt:${tenantId}:1002`
-    }
-  }
-]);
-```
-
-`addBulk` is for submitting a known, small list at once, such as one already-loaded page of orders. It writes that list to one Queue: either every job is created, or none are. It does not keep scanning your database, track batch progress, remember the current position, or create recovery records. Use [batch database processing](./batch-runs.md) for that.
-
-<span id="sc05-delay-retry"></span>
-## Delay and Retry
-
-```ts
-await queuebit.jobs.add(
-  'webhook',
-  'deliver-webhook',
-  { schemaVersion: 1, endpointId, eventId },
-  {
-    delayMs: 60_000,
-    attempts: 5,
-    backoff: {
-      type: 'exponential',
-      delayMs: 1_000,
-      maxDelayMs: 30_000,
-      jitter: 0.2
-    },
-    idempotencyKey: `webhook:${endpointId}:${eventId}`
-  }
-);
-```
-
-`delayMs` waits before the first execution. `attempts` includes the first execution, and another attempt is consumed only when the processor throws a retryable error or times out. If no Worker is online, jobs remain in Redis; processing resumes when a Worker returns.
-
-## When a Processor Needs More Context
-
-The smallest processor only uses `data`. Read more context when you need logging, timeout handling, or an idempotency key for an external system:
-
-```ts
-processors: {
-  'deliver-webhook': defineQueuebitProcessor(async ({
-    data,
-    signal,
-    attempt,
-    idempotencyKey,
-    logger
-  }) => {
-    logger.info({ eventId: data.eventId, attempt }, 'deliver webhook');
-    await webhookClient.send(data, { signal, idempotencyKey });
-  })
-}
-```
-
-- Treat 429, 5xx, and transient network failures as retryable so Queuebit can try again with backoff.
-- Treat invalid endpoints, incompatible schemas, and permanently revoked credentials as fast failures.
-- Timeout aborts business code through `AbortSignal`; if an old execution returns late, it still cannot overwrite the newer result.
-
-## Cancel or Retry Failed Work
-
-```ts
-await queuebit.jobs.cancel(waitingJobId);
-
-const replacement = await queuebit.jobs.retryFailed(failedJobId, {
-  deduplicationKey: `replacement:${failedJobId}:1`
+await queue.ready();
+const started = await task.start({
+  query: { operationId },
+  idempotencyKey: operationId,
 });
+const current = await task.get(started.runId);
 ```
 
-`jobs.cancel` accepts only jobs that have not started yet or are waiting to retry. A failed direct job can be resubmitted with a new replacement identity and usually keeps the same business `idempotencyKey`, so email, webhook, and payment side effects still happen only once. A job owned by a BatchRun must not be replaced individually; recover it from the run with `runs.retryFailed`.
+This is an API micro-example: `queue` is your constructed Queue, `operationId` is server-derived, and `businessService.applyOnce` must provide durable idempotency. Do not substitute a process-local cache. The full receipt guide supplies the real paging workflow.
+
+## Delay and retry
+
+<span id="sc-retry"></span>
+
+Execution defaults to3 attempts with30-second cooperative timeout and full-jitter exponential backoff. Set `policy` in the immutable Task contract when its business needs differ. There is no initial-delay or cron option. Throw/reject to retry from committed state; never catch a failed external write and return success.
+
+## When a handler needs more context
+
+Use immutable `ctx.query`, optional persisted `ctx.state`, runId/batchId/page/attempt and signal. For a next page return its own `ctx.next(newState)`; to end return `ctx.end()`. Calling a control twice, fabricating it or returning a control from another attempt is a handler-contract failure.
+
+## Cancel or inspect work
+
+`task.cancel(runId)` returns a found-discriminated result. Cancellation prevents future eligible work but cannot roll back existing external effects. Operator controls add expectedRevision/reason/commandId for incident tooling. A successful admission only means the Run was accepted; keep consumers alive and inspect execution and callback outcomes separately.
 
 ## Next
 
-- Protect email, payment, and webhook side effects: [Prevent duplicate side effects](./idempotency-patterns.md).
-- Run more than one Worker: [How multiple Workers run together](./distributed-workers.md).
-- Look up exact methods and errors: [API quick reference](./target-api.md).
+[Business idempotency](idempotency-patterns.md) · [Callback recovery](failure-runbooks.md)

@@ -1,117 +1,73 @@
-# Quick Start: Run One Background Job
+# Quick Start: Process a Receipt Snapshot
 
-<span class="manual-label">Quick start · first run the minimum integration</span>
+<span class="manual-label">Quick start · your first real batch, from fixed input to verified result</span>
 
-This page gets the first background job working: install Queuebit, connect Redis, create a client directly, call `jobs.add()` from Web/API code, create a Worker from application code, and confirm the job completes.
+## 1. Install Queuebit and prepare Redis
 
-Do not learn every feature first. For a first integration, only the left side matters:
-
-| Learn now | Ignore for now |
-|---|---|
-| Redis connection, queue name, `jobs.add()`, Worker service code | result callbacks, duplicate protection, automatic retry, delayed execution, database batching, multi-process deployment, framework integration |
-
-## 1. Install Queuebit and Prepare Redis
+Use Node.js22+ and reachable Redis7.2+ with noeviction. This source tree is unreleased; build its root package and install the tarball into your application:
 
 ```bash
-npm install queuebit
+# Source checkout
+npm ci
+npm pack
+# Your application (use the filename printed by pack)
+npm install /absolute/path/to/queuebit-0.0.5.tgz
 ```
 
-Queuebit needs a reachable Redis `>=7.2`. Put its address in `QUEUEBIT_REDIS_URL`; when Redis is available at the default local address `redis://127.0.0.1:6379/0`, the example below uses that default directly.
+The historical0.0.5 filename is not a newly selected v2 release.
 
-## 2. Write One Ordinary Config Object
+## 2. Prepare the business snapshot
 
-Tell Queuebit where Redis is and which queues exist. Start with one `notification` queue. This is not a framework-specific file: the API and Worker reuse the object directly.
+Create a durable snapshot of the receipt records before starting. It must freeze both membership and payload; a timestamp over mutable records is not enough. Copy [receipt-task.ts](https://github.com/devcodex-labs/queuebit/blob/main/examples/batch-v2/receipt-task.ts) into your application.
 
-```ts title="queuebit.ts"
-export const queuebitConfig = {
-  connection: { url: process.env.QUEUEBIT_REDIS_URL ?? 'redis://127.0.0.1:6379/0' },
-  queues: {
-    notification: {}
-  }
-};
-```
+Implement its two small adapter contracts: a repository that reads strictly increasing `id > afterId` pages of at most100 records, and a sink whose `putOnce` atomically combines a durable uniqueness key with the business write. Its `completeOnce` likewise deduplicates completion effects. These adapters are your real database/provider integration, not code supplied by Queuebit.
 
-The two fields have distinct jobs:
-
-- `connection.url` is the Redis address. The environment variable lets each environment select its Redis, while the local fallback supports a first run.
-- `queues.notification` declares the queue used in this example. One first job needs no other queue configuration.
-
-Queuebit automatically derives a stable, isolated namespace from the nearest `package.json` name, so the API and Worker for this application use the same Redis keys without another setting. If deployments of the same package share one Redis, set a distinct `QUEUEBIT_NAMESPACE` for each deployment; an explicit `namespace` in code overrides it.
-
-`createQueuebitClient(queuebitConfig)` validates and normalizes this ordinary object, so no additional config wrapper is needed here.
-
-## 3. Start a Worker from Your Service Code
-
-Pass the business function directly to the Worker. A first integration does not need `queuebit.runtime.ts`; failure handling, timeout, and duplicate protection can be added later.
-
-```ts title="notification-worker.ts"
-import { createQueuebitClient } from 'queuebit';
-import { queuebitConfig } from './queuebit.js';
-
-export async function startNotificationWorker(workerId: string) {
-  const queuebit = await createQueuebitClient(queuebitConfig);
-  const worker = queuebit.createWorker(
-    'notification',
-    async ({ data }) => receiptService.send(data),
-    { workerId, concurrency: 4 }
-  );
-  worker.start();
-
-  return {
-    worker,
-    stop: (options?: { timeoutMs?: number }) => queuebit.close(options)
-  };
-}
-```
-
-Call this code once from a separate Worker service host, never from every Web request:
-
-- `createQueuebitClient(queuebitConfig)` creates one long-lived client; it uses the same Redis, namespace, and queue as the API.
-- `createWorker('notification', ...)` claims only jobs from `notification`. This first example puts only receipt work in that queue, so the business function can process `data` directly.
-- `concurrency: 4` lets this Worker process at most four jobs at once; `worker.start()` is the explicit point where it begins claiming work.
-- Call `stop()` from the service host's shutdown hook. It stops new claims, waits for active handlers, unregisters the Worker role, and then closes the client connection.
-
-Importing these modules does not start a process or attach signal handlers.
-
-## 4. Enqueue Work from Web/API Code
-
-Do not send the receipt slowly inside the request. Put the work in the queue and return a `jobId`. Create the client once at application startup and reuse it from routes; do not close it after every request.
-
-```ts title="Your Web/API code"
-import { createQueuebitClient } from 'queuebit';
-import { queuebitConfig } from './queuebit.js';
-
-// Create this once at application startup; all routes reuse the client.
-const queuebit = await createQueuebitClient(queuebitConfig);
-
-export async function enqueueReceipt(orderId: string, tenantId: string, recipient: string) {
-  const job = await queuebit.jobs.add(
-    'notification', // The queue declared above.
-    'send-receipt', // A readable name for this kind of job.
-    { orderId, tenantId, recipient } // Data received by the Worker.
-  );
-
-  return { jobId: job.id, state: job.state };
-}
-```
-
-`jobs.add()` returns quickly: it guarantees durable enqueueing, not that the receipt has already been sent inside the HTTP request. Keep the `jobId` so a caller can inspect state later.
-
-## 5. Confirm the Result
-
-Read the job by `jobId` from the same application client:
+## 3. Register the task once in your service
 
 ```ts
-const current = await queuebit.jobs.get(job.id);
-// current?.state is waiting, active, completed, failed, or cancelled.
+import { createBatchQueue } from 'queuebit';
+import { defineReceiptTask } from './receipt-task.js';
+import { receiptRepository, receiptSink } from './your-application-adapters.js';
+
+const queue = createBatchQueue({
+  namespace: 'receipt-service',
+  redis: { mode: 'direct', host: '127.0.0.1', port: 6379 },
+});
+const task = defineReceiptTask(queue, receiptRepository, receiptSink);
+await queue.ready();
 ```
 
-`current` can temporarily be `waiting` or `active`, and can be `null` after job history is cleaned up. When it becomes `completed`, the minimal API-enqueue and Worker-execution path works. Up to this point, you do not need result callbacks, duplicate protection, cancellation, internal scheduling details, or multi-process deployment.
+The adapter module is the implementation you provide in step2. Import/construct/define do not connect; `ready()` starts the participant. Create it once, not per HTTP request.
 
-When you need the CLI, multiple Worker/Coordinator service hosts, BatchRun, or centralized configuration governance, see [Configure Redis and Workers](./configuration-recipes.md). Then extract the shared object into `queuebit.config.ts` and BatchRun registration into `queuebit.runtime.ts`.
+## 4. Admit the snapshot
+
+```ts
+const { runId, created } = await task.start({
+  query: { snapshotId: 'snapshot-2026-09' },
+  idempotencyKey: 'receipt-snapshot-2026-09',
+});
+console.log({ runId, created });
+```
+
+Use the actual snapshot ID produced by your business service. Derive authorization and tenant scope on the server, not from an untrusted request alone. start means accepted, not finished; keep this consumer service alive.
+
+## 5. Confirm the result
+
+```ts
+const current = await task.get(runId);
+// Repeat in your monitoring path until terminal:
+// current?.status === 'success'
+// current?.callbacks.delivered === 1 for this success-callback example
+
+// From the application shutdown hook, not immediately after admission:
+const closed = await queue.close();
+console.log(closed.timedOut, closed.remainingExecutions, closed.remainingCallbacks);
+```
+
+The task reads100 rows, writes them with stable business keys, returns `ctx.next({afterId})`, and ends when a later page is empty. Execution and callbacks are at least once. The example qualification uses203 rows and a forced post-write failure to verify safe page repetition; its memory test doubles do not replace your durable adapters.
+
+If readiness fails, check Redis/address/protocol. If work does not advance, check a matching consumer and the Run error. If an external reply is lost, retry with the same business key rather than assuming zero effects.
 
 ## Next
 
-- Add retry, timeout, or duplicate protection to this job: [Run one background job](./job-recipes.md).
-- Need to page many database records: [Process many database records](./batch-runs.md).
-- Prepare production: [Configure Redis and Workers](./configuration-recipes.md).
+[Understand the paging workflow](batch-runs.md) · [Choose Redis settings](configuration-recipes.md) · [Recover safely](failure-runbooks.md)

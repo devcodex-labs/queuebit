@@ -1,156 +1,47 @@
 # Deploy Queuebit in production
 
-<span class="manual-label">Production operations · Redis, Workers, Coordinators, and startup order</span>
+<span class="manual-label">Operations · application hosting and single-primary Redis</span>
 
-Queuebit deployment does not require the test pipelines in this repository. A normal project needs a reliable Redis, a Web/API Producer, and separate Workers. If you use `runs.start` to process database records in batches, run Coordinators separately too.
+<span id="sc-redis"></span>
 
-<span id="sc10-redis-production"></span>
 ## Choose the path for your environment
 
-| Environment | Recommended path |
-|---|---|
-| Local or trial | One Redis plus one Worker; start with [Quick start](./quick-start.md) |
-| Production single Redis or managed Redis | Redis `>=7.2`, `noeviction`, persistence/backups, TLS/ACL |
-| Sentinel | At least two Sentinel addresses; accept async-replication loss during failover |
-| Kubernetes or containers | Separate Web, Worker, and Coordinator Deployments |
-| Direct jobs only | Web/API Producer plus Workers |
-| BatchRun database scans | Web/API Producer plus Workers plus Coordinators |
-
-```mermaid
-flowchart TB
-  LB["Load balancer"] --> Web1["Web / Producer 1"]
-  LB --> Web2["Web / Producer 2"]
-  Web1 --> Redis[("Redis single primary / Sentinel")]
-  Web2 --> Redis
-  C1["Coordinator 1\nBatchRun only"] <--> Redis
-  C2["Coordinator 2\nBatchRun only"] <--> Redis
-  W1["Worker pool A"] <--> Redis
-  W2["Worker pool B"] <--> Redis
-  C1 --> DB[("Business database")]
-  C2 --> DB
-  W1 --> Down["Idempotent downstream"]
-  W2 --> Down
-  Prom["Monitoring"] --> Web1
-  Prom --> C1
-  Prom --> W1
-```
-
-Web instances create work. Workers execute business jobs. Coordinators advance database pages only for BatchRun. Redis is Queuebit's only shared state.
+Run Node.js `>=22` with Redis `>=7.2`. Install the actual local root tarball while this API is unreleased; do not use a historical npm package with the new manual.
 
 ## Redis requirements
 
-| Requirement | Why | Check |
-|---|---|---|
-| Redis `>=7.2` | Queuebit needs these Redis capabilities | `INFO server` |
-| `maxmemory-policy=noeviction` | Queue state must not be evicted | `CONFIG GET maxmemory-policy` |
-| Persistence enabled and healthy | Explicit RPO and backup recovery | `INFO persistence` |
-| ACL and TLS | Restrict network and command access | Connection preflight |
-| Backup restore drill | Sentinel is not zero-loss | Scheduled restore drill |
-| `serverPolicy.mode=strict` | Unsafe or unknown Redis policy must not look ready | `health inspect --json` |
+Use a writable single primary with noeviction, capacity headroom, persistence and backups appropriate to your RPO/RTO. Restrict application access to the intended deployment. TLS verifies CA/hostname; manage credentials in your application's chosen configuration system. Namespace is organizational isolation, not a hostile-tenant authorization boundary.
 
-Redis Cluster is outside v0.1. Sentinel failover can lose acknowledged writes that were not replicated. Queuebit can recover only state that still exists in Redis.
+Readiness checks `INFO memory` for `maxmemory_policy:noeviction` before writing namespace metadata. A different or unobservable policy produces `CONFIG_INVALID`; Queuebit never changes the server configuration. The check also runs when the background runtime revalidates a reconnected client. It is a sampled preflight, not continuous enforcement: operators must retain noeviction throughout the deployment.
 
-The Redis/Sentinel environment scripts in this repository are maintainer release verification: direct Redis uses `QUEUEBIT_REDIS_URL` or `QUEUEBIT_REDIS_HOST`, and Sentinel uses `QUEUEBIT_REDIS_SENTINEL_MASTER` plus `QUEUEBIT_REDIS_SENTINELS`. They are not required for user integration. Cleanup is limited to the unique Queuebit namespace created for that drill.
+Sentinel discovery should use at least three independent failure domains and an appropriate quorum. Data and discovery authentication/TLS are configured separately. Redis asynchronous replication can lose acknowledged writes; no client-side lease can repair rolled-back history. Redis Cluster is not supported.
 
-## Roles to deploy
+## Processes to deploy
 
-| Role | Minimum production count | Scale when |
-|---|---:|---|
-| Web/API Producer | 2 | HTTP request load grows |
-| Worker | 2+ | Waiting age grows and downstream capacity remains |
-| Coordinator | 2 | Active Runs grow and source DB capacity remains |
-| Time advancement | elected from 2+ Workers | delayed/retrying jobs accumulate |
-
-Readiness checks Redis, role ownership, and business dependencies. Liveness only proves the process is alive; it does not replace readiness.
+A producer service admits work and registers contracts without executing handlers. Consumer services execute pages and callbacks. An all-mode service can do both. Every participant uses the same namespace protocol and matching immutable task contract. Application repositories and sinks are deployment-owned dependencies, not bundled database implementations.
 
 ## Startup order
 
-1. Verify Redis policy, persistence, primary role, and connectivity.
-2. Run `config validate --runtime`; block missing handlers and version drift.
-3. Start Worker service hosts and confirm heartbeat plus time advancement.
-4. If you use BatchRun, start CoordinatorRunner service hosts and confirm source/completion dependencies.
-5. Only then allow Web/API to create new work.
+1. Prepare Redis and a durable immutable business snapshot store.
+2. Start consumers with registered handlers; await `ready()`.
+3. Check compatible membership and health.
+4. Start producer/request admission with server-derived identities.
+5. Observe Run and callback outcomes plus the business audit.
 
-```ts title="worker-host.ts"
-import {
-  createQueuebitClient,
-  createQueuebitRuntimeProcessor
-} from 'queuebit';
-import config from './queuebit.config.js';
-import runtime from './queuebit.runtime.js';
+The library does not install a CLI daemon, start extra worker processes or bind global shutdown signals.
 
-export async function startWorkerHost() {
-  const workerClient = await createQueuebitClient({ config });
-  const worker = workerClient.createWorker(
-    'notification',
-    createQueuebitRuntimeProcessor(runtime),
-    { workerId: 'worker-a', concurrency: 8, drainTimeoutMs: 60_000 }
-  );
-  worker.start();
+## Containers and service managers
 
-  return {
-    async close() {
-      await workerClient.close({ timeoutMs: 60_000 });
-    }
-  };
-}
-```
-
-```ts title="coordinator-host.ts · BatchRun only"
-import { createQueuebitClient } from 'queuebit';
-import config from './queuebit.config.js';
-import runtime from './queuebit.runtime.js';
-
-interface ErrorLogger {
-  error(context: { event: unknown }, message: string): void;
-}
-
-export async function startCoordinatorHost(logger: ErrorLogger) {
-  const coordinatorClient = await createQueuebitClient({ config });
-  const coordinator = coordinatorClient.createCoordinatorRunner(runtime, {
-    coordinatorId: 'coordinator-a',
-    concurrency: 2,
-    onError: event => logger.error({ event }, 'Queuebit coordinator error')
-  });
-  coordinator.start();
-
-  return {
-    async close() {
-      await coordinatorClient.close({ timeoutMs: 60_000 });
-    }
-  };
-}
-```
-
-Your process manager decides how these exported host functions are invoked. Retain the returned service and call its `close()` method from the host's shutdown lifecycle. Queuebit does not install signal handlers or start roles on import. Use `npx queuebit config validate` only as an optional pre-deploy configuration check, not as the runtime integration mechanism.
-
-Producer should not create unbounded work with no active Worker. Queue jobs/bytes backpressure is the final guard, not a replacement for startup order and capacity planning.
-
-## Containers and Kubernetes
-
-- Use separate Deployments for Workers and Coordinators; do not hide them as Web Pod sidecars.
-- `terminationGracePeriodSeconds` exceeds role `drainTimeoutMs` plus business-resource cleanup time.
-- Do not use liveness to restart-loop background roles during a short Redis outage. Roles stop new work and reconnect persistently.
-- Each process exposes its own metrics and health. Monitoring aggregates them; a process gauge is not a cluster total.
-- During rolling releases, both old and new Workers must accept in-flight payload schemas.
+Use your standard process manager. Give shutdown enough time for configured close grace and bounded I/O, then inspect the close result. Do not interpret a process being alive as Queue readiness. Avoid per-request Queue creation; maintain long-lived participants.
 
 ## Configuration version and rolling release
 
-- Run creation stores definition `version`, resolved policies, and config digest.
-- A new Coordinator recognizes in-flight old definitions, or old Runs finish before replacement.
-- Job payloads carry business `schemaVersion`; old and new Workers both accept in-flight schemas during rollout.
-- Changing `pageSize`, source, mapper, or completion increments definition version and never rewrites an existing Run.
-- Inspect exposes package version and config digest; incompatible digests in one namespace should alert.
+Shared protocol options must match; local concurrency can differ. Deploy matching consumers before producers use a new task version and retain needed versions until their work drains. Incompatible handler behavior needs a new version even if its JavaScript function name stays the same.
 
 ## Production acceptance
 
-```bash
-npx queuebit health inspect --config queuebit.config.ts --json
-npx queuebit workers inspect --queue notification --config queuebit.config.ts --json
-npx queuebit coordinator inspect --config queuebit.config.ts --json
-npx queuebit queue inspect notification --config queuebit.config.ts --json
-```
+Exercise actual database/provider idempotency, startup failure, TLS/auth rejection, process crash, uncertain replies, failover, callback replay, capacity pressure and owned-service cleanup in your environment. Local same-machine Sentinel fixtures verify client behavior, not independent-fault-domain availability or disk-persistence guarantees.
 
-When you validate from application code, call `queuebit.capacity.snapshot()` after startup to read declared queue counters, jobs/bytes watermarks, utilization ratios, and backpressure state. It does not scan arbitrary Redis keys; treat it as a capacity-readiness view.
+## Next
 
-Rehearse Worker crash during processing, Coordinator crash at page/dispatch boundaries, time-advancement takeover, Redis disconnect/reconnect, Sentinel failover loss boundary, completion-handler failure, and drain timeout. Follow [Recover from failures](./failure-runbooks.md).
+[Connection recipes](configuration-recipes.md) · [Outage boundaries](distributed-semantics.md)

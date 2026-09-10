@@ -1,13 +1,13 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/cli.ts', 'src/vext/index.ts'],
+  entry: ['src/index.ts'],
   format: ['esm', 'cjs'],
   dts: true,
-  external: ['vextjs'],
-  sourcemap: true,
+  external: ['@redis/client'],
+  sourcemap: false,
   clean: true,
   splitting: false,
-  target: 'node20',
+  target: 'node22',
   outDir: 'dist'
 });

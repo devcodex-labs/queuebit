@@ -1,132 +1,33 @@
-# Run multiple Workers together
+# Run multiple consumers together
 
-<span class="manual-label">On-demand capability · scale out, crash recovery, and rolling releases</span>
+<span class="manual-label">Task guide · scale out, crash recovery and rolling releases</span>
 
-Queuebit scales by running more Worker processes against the same Redis, `namespace`, and queue. Redis decides which Worker gets each job. Your business code still protects external side effects from duplicates.
+<span id="sc-scale"></span>
 
-<span id="sc04-distributed-workers"></span>
 ## Start with what you need
 
-| Need | Key point |
-|---|---|
-| Run more Workers | Every Worker uses the same config/runtime and queue name |
-| Increase throughput | Total concurrency is roughly the sum of `concurrency` across ready Workers |
-| Recover after one Worker crashes | After lease expiry, another Worker reclaims the job |
-| Roll out a new version | Start the new Worker, drain the old one, never remove all capacity at once |
-| Avoid duplicate email or payment | Processors must use a stable `idempotencyKey` |
+One `runtime.mode: 'all'` process can admit and consume tasks. Use a producer mode in request-facing services and consumer mode in background services when lifecycle or scaling differs. Producer mode registers contracts without handlers; consumer/all require exactly the declared handlers. Consumer mode cannot start Runs.
 
 ## Minimal deployment
 
-```mermaid
-flowchart LR
-  P["Web/API Producer"] --> Redis[("single-primary Redis")]
-  W1["Worker A\nconcurrency 8"] <--> Redis
-  W2["Worker B\nconcurrency 8"] <--> Redis
-  W3["Worker C\nconcurrency 4"] <--> Redis
-  C["Coordinator\nBatchRun only"] <--> Redis
-```
-
-All instances use the same Redis, `namespace`, and queue name. Direct jobs need only Producer plus Worker. You need a Coordinator only when `runs.start` processes database records in batches.
-
-```ts title="worker-service.ts"
-import {
-  createQueuebitClient,
-  createQueuebitRuntimeProcessor
-} from 'queuebit';
-import config from './queuebit.config.js';
-import runtime from './queuebit.runtime.js';
-
-export async function startWorker(workerId: string) {
-  const client = await createQueuebitClient({ config });
-  const worker = client.createWorker(
-    'notification',
-    createQueuebitRuntimeProcessor(runtime),
-    { workerId, concurrency: 8, drainTimeoutMs: 60_000 }
-  );
-  worker.start();
-  return { worker, stop: () => client.close({ timeoutMs: 60_000 }) };
-}
-```
-
-Run the same service code on multiple machines or containers with distinct `workerId` values. Your deployment decides the command and process manager; the Queuebit API only owns the Worker lifecycle.
+Share Redis, namespace, protocol options and task name/version/events/effective execution policy. Define before `ready()`. The package does not load modules or launch worker processes for you. There is no separate coordinator or scheduler role.
 
 ## Calculate concurrency
 
-```text
-maximum active jobs = sum(concurrency of all ready Workers)
-```
+Each process defaults to4 physical execution slots and4 callback slots. Across N identically configured consumers the nominal local slot sum is N×4 for each class, not a global rate limit. Measure database/provider capacity and event-loop delay. One Run advances its pages serially; independent Runs can execute concurrently.
 
-With three Workers at `8`, `8`, and `4`, the theoretical maximum is `20` active jobs. This is not a downstream quota. Keep the real value below the tightest database pool, provider quota, CPU, memory, and Redis capacity limit.
+## When a consumer crashes
 
-When scaling out, do not look only at waiting count. Watch waiting age, downstream 429/5xx, database pool usage, Redis latency, queue backpressure, and duplicate business results.
-
-## When a Worker crashes
-
-```mermaid
-sequenceDiagram
-  participant W1 as Worker A
-  participant R as Redis
-  participant W2 as Worker B
-  W1->>R: claim job with lease 7
-  W1-xR: process exits
-  R-->>R: lease expires
-  W2->>R: reclaim job with lease 8
-  W2->>R: settle lease 8
-  W1-->>R: late settle lease 7
-  R-->>W1: QB_JOB_STATE_CONFLICT
-```
-
-After a Worker crashes, Redis waits for the lease to expire and then lets another Worker take over. If the old Worker returns late, its settle is rejected and cannot overwrite the new result.
-
-This protects Queuebit state in Redis only. If the old Worker already sent email, charged money, or called a webhook, the external side effect is not automatically undone. Use [duplicate side-effect protection](./idempotency-patterns.md) in processors.
+Lease recovery can run the same page again. Late settlements from the previous token are rejected. External effects can still repeat, so every retry uses durable business keys. A timeout-aborted handler that keeps running occupies its physical slot until it exits; admitting a replacement does not magically free CPU or sockets.
 
 ## Scale out
 
-1. Confirm downstream capacity first, not only queue depth.
-2. Start the new Worker and wait for `ready` plus heartbeat.
-3. Confirm old and new runtime versions can process in-flight payloads.
-4. Increase replicas or per-process `concurrency` gradually.
-5. Watch downstream errors, Redis latency, waiting age, and backpressure.
-
-```bash
-npx queuebit workers inspect --queue notification --config queuebit.config.ts
-npx queuebit queue inspect notification --config queuebit.config.ts
-```
-
-Use `--include-stale` during rolling releases or incident review when you need recently expired Worker heartbeats instead of only active roles.
+Start a process with the same immutable task contract, await readiness, and verify membership/health before sending traffic. Protocol mismatches fail explicitly. Do not change shared limits or callback policy on just one process.
 
 ## Rolling release and drain
 
-```bash
-npx queuebit worker drain \
-  --queue notification \
-  --worker-id worker-a \
-  --reason rolling-release \
-  --config queuebit.config.ts
-```
+Deploy matching consumers before routing producers to a new task version. Keep old-version consumers while retained work still needs them. This is versioned task operation within BatchQueue, not support for removed legacy APIs. On shutdown stop new request admission and await `queue.close()`; inspect remainingExecutions, remainingCallbacks and timedOut. Your process manager owns any later termination decision.
 
-The remote drain command only tells that Worker to stop taking new jobs. After the Worker observes it, the `drainTimeoutMs` passed to `client.createWorker()` controls how long active handlers may finish. A service host can also call `worker.drain({ timeoutMs: 60_000 })` or `client.close({ timeoutMs: 60_000 })` directly. If the timeout expires, Queuebit does not mark jobs successful or failed; renewal stops, the host decides its exit policy, and another Worker reclaims after lease expiry.
+## Next
 
-Rolling release order:
-
-1. Keep at least one old Worker ready.
-2. Start the new Worker and verify it can process in-flight payloads.
-3. Drain one old Worker and stop it after active=0.
-4. Repeat; never remove all capacity at once.
-5. If you use BatchRun, replace Coordinators one at a time and keep old definition runtime until old Runs finish.
-
-## No separate time-advancement process
-
-v0.1 fixes `scheduler.mode=cooperative`: background Workers also compete for the time-advancement lease that promotes delayed/retrying jobs back to runnable. Users do not need to deploy a standalone Scheduler, and should not look for `scheduler start`, `scheduler inspect`, or `scheduler drain` from older drafts.
-
-For resource isolation, deploy Workers separately from Web/API and keep at least two Worker instances eligible for time advancement.
-
-## Safety line before adding Workers
-
-| Signal | Condition before adding Workers |
-|---|---|
-| Downstream 429/5xx | Not already rising with current concurrency |
-| Database/HTTP pool | Clear spare capacity exists |
-| Redis memory/latency | Inside budget and no persistence error |
-| Queue backpressure | Jobs and bytes return to or below low watermark under load |
-| Duplicate side-effect protection | ACK-loss drill has passed |
+[Choose configuration](configuration-recipes.md) · [Idempotency](idempotency-patterns.md)

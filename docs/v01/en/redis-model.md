@@ -1,65 +1,33 @@
 # Redis model and atomic invariants
 
-<span class="manual-label">Maintainer · internal storage contract</span>
-
-This page explains how Queuebit keeps Redis state consistent. Normal users should not depend on these keys or models; integration, debugging, and recovery use only public API/CLI surfaces.
+<span class="manual-label">Maintainer · internal storage contract, not a public command API</span>
 
 ## User boundary
 
-Public API and CLI are the only supported query and recovery surfaces. Redis keys are not a user API; never cancel, retry, or recover by editing them.
-
-Production APIs do not scan arbitrary Redis keyspace for user operations. Target test harnesses may use `SCAN qb:{namespace}:*` only to clean the unique namespace created for that run; Queuebit docs, CLI, and recovery procedures never rely on `FLUSHDB`, `FLUSHALL`, global `SCRIPT FLUSH`, or manual key edits.
+Consumers use BatchQueue, not raw Redis key manipulation. The internal prefix is `qb:batch:v1:{namespace}:`. Old key prefixes are not migrated or consumed. Startup only uses a bounded SCAN with MATCH restricted to the exact new namespace to detect orphaned state; there is no old-key scan.
 
 ## Conceptual keyspace
 
-| Category | Content | Primary index |
-|---|---|---|
-| Queue | waiting/active/delayed/retrying/terminal and jobs/bytes latch | queue + state + due/sequence |
-| Job | data/options/attempt/lease generation/owner/result/error/parent | jobId and dedup digest |
-| Run | definition/version/input digest/boundary/cursors/exhaustion/summary | runId, definition/state/created sequence |
-| Batch | index/cursor range/record summary/jobs/execution/completion | runId + batch index |
-| Failure envelope | Mapper record or processor job replay data | runId + failure sequence |
-| Completion event | type/attempt/delivery generation/handler/summary/error | event sequence + run/batch/state |
-| Role lease | Worker/Coordinator/time-owner identity, generation, expiry | role/domain |
-| Tombstone | identity/digest/version/state after details expire | dedup key TTL |
-
-Exact key names freeze during implementation, but related state must commit under one single-primary atomic boundary using hash tags or equivalent. v0.1 does not weaken the contract by sharding across Redis Cluster.
+Namespace metadata binds schema/protocol. Definitions bind task identity. Runs store the immutable query and committed state; indexes support bounded live listings and due/lease work. Events hold immutable settlement snapshots, independent delivery state and references protecting parent data. Runtime members are bounded and distinct from durable business identity.
 
 ## Required atomic transitions
 
-- Job add/addBulk/dedup/backpressure counting.
-- waiting/delayed/retrying to active claim.
-- active to completed/retrying/failed plus Batch summary.
-- Lease expiry to stalled reclaim generation.
-- Run boundary plus initial dispatch/checkpoint cursor.
-- Source page to Batch/jobs/envelopes/dispatchCursor.
-- Batch barrier to continuous checkpoint-prefix cascade.
-- Source-exhausted marker plus Run terminal evaluation.
-- Completion claim/settle/retry generation.
-- Idempotent pause/resume/cancel/recovery identity.
+Static Lua receives every key explicitly in KEYS. Lease/token/revision checks fence claim, renew and settlement. Partial object/index inconsistency fails rather than becoming executable work. Capacity accounting prepays dependent settlement/Event space and refuses unsafe new admission without preventing valid drain work.
 
 ## Canonical input
 
-`qbcj-v1` accepts JSON-serializable values only. Object keys sort recursively by Unicode code point, arrays preserve order, strings use UTF-8, and version plus SHA-256 digest is stored. `undefined`, functions, symbols, BigInt, NaN/Infinity, and cycles fail before Redis.
+JSON validation precedes storage; canonical identity preserves exact accepted string/number/array/object semantics. Query/state/error have encoded size bounds. Business keys are valid Unicode bytes without trimming or normalization.
 
 ## Retention and non-removable state
 
-- Active, waiting, delayed, retrying, and non-terminal Run work is never cleaned.
-- A Run or descendant Batch with completion outside `not_required/delivered` is not cleaned.
-- A `completionState=failed` event is alerted and explicitly retried, never silently deleted.
-- After failed-work cleanup, Run reports recovery data expired.
-- When details expire before dedup TTL, a compact tombstone remains through key TTL.
-- Runtime M2K `retention.purge()` is a safe local Job/Run/Completion foundation: it reads declared queue `completed` indexes, the terminal Run detail index, and the Completion detail index, defaults to dry-run, deletes direct completed Jobs with no identity references, compacts deduplication/idempotency/replacement-bound direct completed Jobs into `detailsExpired=true` tombstones, compacts age-expired or maxCount-excess terminal Runs whose completion is `not_required` or `delivered`, and compacts delivered/not-required Completion events after the parent Run is terminal using independent `completionEvents.ageMs/maxCount`. Run compaction deletes input/boundary/cursors and failure replay envelopes while preserving identity and summary counters, then removes the Run from the terminal detail index so tombstones do not consume `terminalRuns.maxCount`. Completion compaction deletes `summary`, backoff/error, due, and delivery lease details while preserving event identity plus `summaryDigest`, removes the event from the Completion detail index so tombstones do not consume `completionEvents.maxCount`, and keeps the stable Completion event index for `completions.list/get` tombstone readback. It still skips non-terminal work, pending/retrying/delivering/failed completion events, Completion events whose parent Run is not terminal, BatchRun-owned job cleanup, and target Redis cleanup evidence.
+Unfinished normal callbacks and valid frozen replay drains protect dependencies. Dead-letter expiry is anchored to firstDeadAt; replay does not move it. GC removes fees and references before eligible Run/query/idempotency/definition cleanup. There are no permanent tombstones or whole-namespace automatic purge.
 
-## Server policy
-
-Strict preflight verifies noeviction, persistence status, primary/replica role, replication connection/lag, and recent persistence errors. It reruns after Sentinel failover. Unreadable policy is unknown/not_ready, never inferred healthy.
+Never issue FLUSHDB, FLUSHALL or manual metadata/index deletion as a library repair step. Namespace lifecycle methods do not clear old data. Recovery decisions belong to an explicit operator workflow.
 
 ## Verification matrix
 
-- Concurrent claim produces one owner.
-- Late Worker, Coordinator, time-owner, and completion generations are rejected.
-- Failed page commit cannot advance cursor alone.
-- Out-of-order paced batch completion cannot jump checkpoint.
-- addBulk validation/backpressure failure creates no partial jobs.
-- Retention preserves active and undelivered completion state, and tombstones preserve deduplication conflict.
+Verify CAS/token races, unknown replies, partial indexes, bounded memory, capacities, Event/Run coupling, expiry/drain behavior and cleanup against actual Redis. The root package test additionally seeds old keys and observes zero old-key commands while confirming new-key traffic.
+
+## Next
+
+[Runtime lifecycle](worker-lifecycle.md) · [Qualification](development-contract.md)

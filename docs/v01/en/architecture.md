@@ -2,46 +2,28 @@
 
 <span class="manual-label">Maintainer · not an integration prerequisite</span>
 
-This page is for implementers and maintainers checking internal boundaries. Users integrating Queuebit do not need it; start with [Quick start](./quick-start.md), [Run one background job](./job-recipes.md), or [Configure Redis and Workers](./configuration-recipes.md).
-
-## Goals
-
-- Redis-only: shared correctness state never lives only in local memory or files.
-- Distributed-first: claims, cursors, batches, completion, and role ownership converge across processes.
-- Core/host separation: vext bridges client, dependency injection, and lifecycle; core does not depend on the app.
-- At least once: fencing protects Redis commits and business idempotency protects external side effects.
+Read the [user guide](quick-start.md) before extending the library. BatchQueue has one public entry and one Redis state machine. It does not expose its storage or runtime classes as package subpaths.
 
 ## Module boundaries
 
-| Module | Owns | Must not own |
-|---|---|---|
-| config/schema | Static types, defaults, cross-validation, canonical digest | Business connections and handler functions |
-| client/producer | Job/Run create, query, control, prompt failure | Processor/source execution |
-| worker runtime | claim, renew, process, settle, drain | Source and Run cursor |
-| coordinator runtime | source, mapper, Batch, cursor, completion | Processor execution |
-| time advancement | Promote delayed/retry work and recover timers | Business handler or DB source |
-| Redis adapter | Keyspace, atomic transitions, indexes, retention | Business authorization and side effects |
-| vext adapter | Plugin, extension, logger, onClose, consumer type | Implicitly start background roles |
+| Module | Responsibility |
+|---|---|
+| Root and Batch API | Explicit public exports, types and stable errors |
+| Domain | Strict JSON/configuration, task identity, context-owned controls and cursors |
+| Application | Admission and query/control orchestration |
+| Runtime | Local physical slots, leases, cooperative execution, callbacks and shutdown |
+| Redis storage | Explicit key plans, static Lua operations, budgets and bounded indexes |
+
+The only runtime dependency is `@redis/client@6.1.0`. Application repositories, providers and framework hosting remain outside the package.
 
 ## Atomic boundaries
 
-1. Job claim writes owner, attempt, lease generation, and expiry together.
-2. Job settlement checks jobId, attempt, generation, and workerId and commits Batch counters in the same operation.
-3. Source-page dispatch commits Batch identity, cursor range, record summary, replay envelopes, jobs, and dispatchCursor together.
-4. Checkpoint advances only across a continuous prefix of execution plus completion barriers.
-5. Completion claim/settle checks eventId, attempt, delivery generation, and ownerId.
-6. Queue jobs/bytes backpressure counts share atomic boundaries with add, addBulk, and Batch dispatch.
+Every state-changing settlement checks the current lease/token and revision in the Redis operation. Stale execution cannot advance a Run, but fencing cannot retract an external side effect. Prepaid capacity covers settlement and Event creation; GC returns charges only when dependencies are no longer protected.
 
-## Role composition and lazy loading
+## Lifecycle
 
-`queuebit.runtime.ts` can be the single composition root, but importing it opens no connection. Worker activates processors only and Coordinator activates source/mapper/completion only. Cooperative time advancement reuses the Worker's Redis connection and ownership loop without activating source, completion, or extra business DB/HTTP resources. Large projects may split role modules while the canonical example keeps one definition truth source.
+Import, construction and definition are pure with respect to network I/O. `ready()` owns connections and starts the selected mode. `close()` stops admission/claiming and drains within the local grace period; unresolved handlers continue occupying physical slots until they exit.
 
-## Milestone closure
+## Qualification
 
-| Milestone | Scope | Closure evidence |
-|---|---|---|
-| M0 Queue kernel | Queue, Job, Producer, Worker, delay/retry, lease/fencing, direct replacement, cooperative time, vext Producer | Multi-Worker, stale-attempt rejection, crash redelivery, addBulk atomic/limits, loader/ESM/CJS/types/consumer smoke |
-| M1 BatchRun closed loop | Source, Mapper, Coordinator, Batch, completion, dual cursor, blocked/recovery | Seed DB to final completion, multi-Worker, Coordinator crash, cursor, completion generation, cancellation invariants |
-| M2 Production foundation (M2A–M2K in source) | paced/backpressure, TLS/ACL/Sentinel mapping, metrics/health/CLI foundation, bilingual site | Local foundation tests + environment-gated Redis harnesses. **Not** complete v0.1 until target Redis `>=7.2` execution, fault/Sentinel failover evidence, destructive purge/full tombstone, production scrape/auth/network evidence, clean example E2E, and publish gates close |
-
-M0 and M1 are internal milestones and cannot independently be described as complete v0.1. M2K source delivery is foundation, not release-complete v0.1.
+Use the [qualification guide](development-contract.md). Internal tests may build isolated modules, while distribution tests must pack and install the actual root package with no repository aliases.

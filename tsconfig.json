@@ -16,5 +16,5 @@
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "tsup.config.ts"]
+  "include": ["src/index.ts", "src/batch/**/*.ts", "tsup.config.ts", "tsup.batch.config.ts"]
 }

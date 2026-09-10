@@ -1,88 +1,77 @@
 import { defineConfig } from '@rspress/core';
-import mermaid from 'rspress-plugin-mermaid';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 const englishSidebar = [
-  {
-    text: 'Quick Start',
-    items: [
-      { text: 'Quick start', link: '/quick-start' },
-      { text: 'Learning path', link: '/concepts' },
-      { text: 'Run one background job', link: '/job-recipes' }
-    ]
-  },
-  {
-    text: 'On-Demand Capabilities',
-    items: [
-      { text: 'Process many database records', link: '/batch-runs' },
-      { text: 'Prevent duplicate side effects', link: '/idempotency-patterns' },
-      { text: 'Distributed workers', link: '/distributed-workers' },
-      { text: 'vext integration', link: '/vext-integration' }
-    ]
-  },
-  {
-    text: 'Production',
-    items: [
-      { text: 'Configure Redis and Workers', link: '/configuration-recipes' },
-      { text: 'Deploy Queuebit in production', link: '/production-deployment' },
-      { text: 'Check problems after launch', link: '/operations' },
-      { text: 'Recover from failures', link: '/failure-runbooks' },
-      { text: 'When Redis is down', link: '/distributed-semantics' }
-    ]
-  },
-  {
-    text: 'Reference',
-    items: [
-      { text: 'Can my environment use Queuebit?', link: '/compatibility' },
-      { text: 'API quick lookup', link: '/target-api' },
-      { text: 'CLI reference', link: '/cli-reference' },
-      { text: 'Configuration field dictionary', link: '/cli-and-config' },
-      { text: 'States and errors', link: '/failure-modes' }
-    ]
-  }
+  { text: 'Start', items: [
+    { text: 'First batch', link: '/quick-start' },
+    { text: 'Choose the right task', link: '/concepts' },
+    { text: 'Run a bounded task', link: '/job-recipes' }
+  ] },
+  { text: 'Tasks', items: [
+    { text: 'Page business records', link: '/batch-runs' },
+    { text: 'Prevent duplicate effects', link: '/idempotency-patterns' },
+    { text: 'Scale consumers', link: '/distributed-workers' }
+  ] },
+  { text: 'Operations', items: [
+    { text: 'Choose Redis settings', link: '/configuration-recipes' },
+    { text: 'Deploy the service', link: '/production-deployment' },
+    { text: 'Inspect and control runs', link: '/operations' },
+    { text: 'Recover from failures', link: '/failure-runbooks' },
+    { text: 'Handle Redis outages', link: '/distributed-semantics' }
+  ] },
+  { text: 'Reference', items: [
+    { text: 'Supported environment', link: '/compatibility' },
+    { text: 'API lookup', link: '/target-api' },
+    { text: 'Complete Batch contract', link: '/batch-v2' },
+    { text: 'Configuration defaults', link: '/cli-and-config' },
+    { text: 'States and errors', link: '/failure-modes' },
+    { text: 'Operator SDK, no CLI', link: '/cli-reference' },
+    { text: 'Framework hosting', link: '/vext-integration' }
+  ] },
+  { text: 'Maintainer', items: [
+    { text: 'Module boundaries', link: '/architecture' },
+    { text: 'Storage invariants', link: '/redis-model' },
+    { text: 'Runtime lifecycle', link: '/worker-lifecycle' },
+    { text: 'Qualification and release', link: '/development-contract' }
+  ] }
 ];
 
 const chineseSidebar = [
-  {
-    text: '快速开始',
-    items: [
-      { text: '快速开始', link: '/zh/quick-start' },
-      { text: '学习路径', link: '/zh/concepts' },
-      { text: '执行一个后台任务', link: '/zh/job-recipes' }
-    ]
-  },
-  {
-    text: '按需能力',
-    items: [
-      { text: '批量处理数据库记录', link: '/zh/batch-runs' },
-      { text: '防止重复副作用', link: '/zh/idempotency-patterns' },
-      { text: '多个 Worker 怎么一起跑', link: '/zh/distributed-workers' },
-      { text: 'vext 接入', link: '/zh/vext-integration' }
-    ]
-  },
-  {
-    text: '生产运维',
-    items: [
-      { text: '配置 Redis 和 Worker', link: '/zh/configuration-recipes' },
-      { text: '生产上线怎么部署', link: '/zh/production-deployment' },
-      { text: '上线后怎么查问题', link: '/zh/operations' },
-      { text: '故障恢复', link: '/zh/failure-runbooks' },
-      { text: 'Redis 断了怎么办', link: '/zh/distributed-semantics' }
-    ]
-  },
-  {
-    text: '参考',
-    items: [
-      { text: '我的环境能不能用', link: '/zh/compatibility' },
-      { text: 'API 快查', link: '/zh/target-api' },
-      { text: 'CLI 参考', link: '/zh/cli-reference' },
-      { text: '配置字段字典', link: '/zh/cli-and-config' },
-      { text: '状态和错误怎么读', link: '/zh/failure-modes' }
-    ]
-  }
+  { text: '开始使用', items: [
+    { text: '开始第一个批处理', link: '/zh/quick-start' },
+    { text: '理解任务与快照', link: '/zh/concepts' },
+    { text: '执行有限任务', link: '/zh/job-recipes' }
+  ] },
+  { text: '常见任务', items: [
+    { text: '分页处理业务记录', link: '/zh/batch-runs' },
+    { text: '避免重复业务写入', link: '/zh/idempotency-patterns' },
+    { text: '扩容消费者', link: '/zh/distributed-workers' }
+  ] },
+  { text: '运行与恢复', items: [
+    { text: '选择 Redis 配置', link: '/zh/configuration-recipes' },
+    { text: '部署服务', link: '/zh/production-deployment' },
+    { text: '检查和控制任务', link: '/zh/operations' },
+    { text: '故障恢复', link: '/zh/failure-runbooks' },
+    { text: '处理 Redis 中断', link: '/zh/distributed-semantics' }
+  ] },
+  { text: '参考查询', items: [
+    { text: '支持环境', link: '/zh/compatibility' },
+    { text: 'API 快查', link: '/zh/target-api' },
+    { text: 'Batch 完整合同', link: '/zh/batch-v2' },
+    { text: '配置默认值', link: '/zh/cli-and-config' },
+    { text: '状态与错误', link: '/zh/failure-modes' },
+    { text: '使用运维 SDK（无 CLI）', link: '/zh/cli-reference' },
+    { text: '框架托管（无专用适配器）', link: '/zh/vext-integration' }
+  ] },
+  { text: '维护者资料', items: [
+    { text: '模块边界', link: '/zh/architecture' },
+    { text: '存储不变量', link: '/zh/redis-model' },
+    { text: '运行时生命周期', link: '/zh/worker-lifecycle' },
+    { text: '验证与发布边界', link: '/zh/development-contract' }
+  ] }
 ];
 
 const englishNav = [
@@ -108,20 +97,20 @@ export default defineConfig({
   icon: '/favicon.svg',
   globalStyles: path.join(currentDir, 'styles', 'queuebit.css'),
   globalUIComponents: [path.join(currentDir, 'components', 'A11yLabels.tsx')],
-  description: 'Redis-only distributed job queue user manual for queuebit.',
+  description: 'Durable batch processing user manual for queuebit.',
   outDir: 'dist',
   locales: [
     {
       lang: 'en',
       label: 'English',
       title: 'queuebit',
-      description: 'Redis-only distributed job queue user manual.'
+      description: 'Durable batch processing user manual.'
     },
     {
       lang: 'zh',
       label: '简体中文',
       title: 'queuebit',
-      description: 'Redis-only 分布式任务队列用户手册。'
+      description: '基于 Redis 的持久批处理用户手册。'
     }
   ],
   markdown: {
@@ -129,14 +118,6 @@ export default defineConfig({
       checkDeadLinks: false
     }
   },
-  plugins: [
-    mermaid({
-      mermaidConfig: {
-        theme: 'neutral',
-        securityLevel: 'strict'
-      }
-    })
-  ],
   search: {
     codeBlocks: true
   },
@@ -150,7 +131,7 @@ export default defineConfig({
         lang: 'en',
         label: 'English',
         title: 'queuebit',
-        description: 'Redis-only distributed job queue user manual.',
+        description: 'Durable batch processing user manual.',
         nav: englishNav,
         footer: {
           message: 'Released under the Apache-2.0 License.'
@@ -163,7 +144,7 @@ export default defineConfig({
         lang: 'zh',
         label: '简体中文',
         title: 'queuebit',
-        description: 'Redis-only 分布式任务队列用户手册。',
+        description: '基于 Redis 的持久批处理用户手册。',
         nav: chineseNav,
         footer: {
           message: '基于 Apache-2.0 许可证发布。'

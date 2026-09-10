@@ -1,75 +1,31 @@
 # Can my environment use Queuebit?
 
-<span class="manual-label">Reference · Node, Redis, vext, and workload support</span>
-
-For first integration, follow [Quick start](./quick-start.md). Use this page before production to check whether your Node version, Redis topology, web framework, and workload type are supported by Queuebit v0.1.
+<span class="manual-label">Reference · supported runtime and workload boundaries</span>
 
 ## One-minute check
 
-| Your situation | Supported? | Notes |
-|---|---|---|
-| Node.js `>=20` | yes | core requirement |
-| vext project on Node.js `>=20.19` | yes | `queuebit/vext` requirement |
-| Redis `>=7.2` single-primary | yes | standalone, managed Redis, TLS, and Sentinel |
-| Redis Cluster | no | v0.1 does not support cluster slots or multiple primaries |
-| One-off background jobs | yes | Use `jobs.add` plus Worker |
-| Finite database batch processing | yes | Use `runs.start` plus Coordinator |
-| CDC, infinite streams, cron, DAG/Flow | no | Wait for a later version that explicitly ships them |
-| Exactly-once or strict FIFO required | not a fit | Queuebit is at-least-once |
-| Any Node web framework | can integrate | Create a client directly and run Workers separately |
-| vext | first-class support | First official host is `vextjs@0.3.26` |
+- Node.js `>=22`; qualification targets Node22 and Node24.
+- Redis `>=7.2`, writable single primary and `noeviction`.
+- Standalone or managed single-primary Redis, optionally discovered by Sentinel.
+- ESM/CommonJS with conditional TypeScript declarations for NodeNext/Bundler.
+- Install the locally built root tarball for this unreleased API. Historical npm versions are not interchangeable.
 
 ## Good fits
 
-- Return HTTP 202 quickly and execute the business action in background Workers.
-- Process a finite database dataset by pages, with per-batch and final completion records.
-- Scale across multiple Workers and recover after any one process crashes.
-- Protect email, payment, webhook, or database writes from duplicate side effects.
+Finite snapshot processing, exports, receipt delivery and controlled backfills where your application supplies durable input and idempotent external writes. Multiple Runs can execute concurrently; each Run advances one serial page cursor.
 
 ## Not a fit
 
-- Redis Cluster, a non-Redis backend, or offline local execution followed by state merging.
-- Strict FIFO, key partitions, DAG/Flows, repeatable/cron jobs, priorities, or a global rate limiter.
-- Automatic compensation of external effects or an exactly-once guarantee.
-- A process-local in-memory queue presented as a distributed queue.
+Redis Cluster, non-Redis backends, unbounded streams/CDC, cron, DAG orchestration, priorities, global rate limiting and a built-in administration UI. Namespace separation is not hostile-tenant security isolation.
 
-## Install and check the environment
+## Connection safety
 
-```bash
-npm install queuebit
-```
+TLS validates CA and hostname. Sentinel discovery/data credentials and TLS settings are separate. Three Sentinels in independent failure domains are a deployment recommendation; same-machine tests do not certify availability across failure domains. Asynchronous replication can lose acknowledged writes.
 
-```bash
-node --version
-redis-cli INFO server
-redis-cli INFO persistence
-redis-cli CONFIG GET maxmemory-policy
-```
+## Compatibility boundary
 
-Production Redis must use `maxmemory-policy=noeviction`, enable persistence and backups for your RPO, and acknowledge that Sentinel asynchronous replication can lose acknowledged writes during failover.
-
-## Validate before starting
-
-```bash
-npx queuebit config validate \
-  --config queuebit.config.ts \
-  --runtime queuebit.runtime.ts
-
-npx queuebit health inspect --config queuebit.config.ts --json
-```
-
-| Result | Meaning | Action |
-|---|---|---|
-| `ready` | The current role and Redis policy are acceptable | Start the workload |
-| `degraded` | A warn policy or observability signal is incomplete | Local use may continue; do not admit production traffic |
-| `not_ready` | Connection, strict policy, registration, or role ownership failed | Fix the cause before starting |
-
-## Do not look for these old capabilities
-
-v0.1 does not ship a standalone Scheduler, and there is no `scheduler start`, `scheduler inspect`, or `scheduler drain`. Time advancement is cooperative inside background Workers. If you require a completely separate time-advancement process, wait for a later version that explicitly ships it; do not treat older drafts as compatibility promises.
+No old API aliases, old Redis data migration, CLI, worker/coordinator package entry or framework-specific adapter is provided. The retained `docs/v01` directory is a URL convention only. Old Redis keys are not read or deleted by queue lifecycle operations.
 
 ## Next
 
-- First successful run: [Quick start](./quick-start.md).
-- Production Redis and Worker values: [Configure Redis and Workers](./configuration-recipes.md).
-- Redis outage, failover, or data loss: [When Redis is down](./distributed-semantics.md).
+[First batch](quick-start.md) · [Choose Redis settings](configuration-recipes.md)

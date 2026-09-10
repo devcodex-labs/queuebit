@@ -1,41 +1,29 @@
 # Reference
 
-<span class="manual-label">Reference · exact lookup</span>
-
-Use these pages to look up methods, fields, commands, states, and errors. They do not replace [Quick start](./quick-start.md) or task-oriented guides.
-
-## Version Status
-
-This page records the intended stable public usage for Queuebit v0.1. Whether a method, configuration field, state, or CLI command is available depends on the npm package version you installed and its release notes.
+<span class="manual-label">Reference · exact lookup after the first successful task</span>
 
 ## Find by task
 
-| Need | Page |
+| Need | Read |
 |---|---|
-| Client, jobs, Runs, or completion methods | [API quick lookup](./target-api.md) |
-| Source, mapper, processor, or completion runtime contract | [API quick lookup](./target-api.md#runtime-registration) |
-| Configuration type, default, or mutual exclusion | [Configuration field dictionary](./cli-and-config.md) |
-| Start, inspect, control, or drain command | [CLI reference](./cli-reference.md) |
-| Job, Run, or Completion state | [States and errors](./failure-modes.md) |
-| Whether Node, Redis, or vext is supported | [Can my environment use Queuebit?](./compatibility.md) |
-| Safe recovery by incident symptom | [Failure runbooks](./failure-runbooks.md) |
+| First real business batch | [Quick start](quick-start.md) |
+| Public method/type lookup | [API lookup](target-api.md) |
+| Full behavior and bounds | [Complete Batch contract](batch-v2.md) |
+| Configuration defaults | [Field dictionary](cli-and-config.md) |
+| Supported environments | [Compatibility](compatibility.md) |
+| Interpret execution/delivery failures | [States and errors](failure-modes.md) |
+| Control or replay work | [Operations](operations.md) |
+| Host inside a framework | [Framework hosting](vext-integration.md) |
+| Old CLI link | [Operator SDK, no CLI](cli-reference.md) |
 
 ## Public naming overview
 
-| Domain | Stable entry |
-|---|---|
-| Create client | `createQueuebitClient(config, options?)`; compatible `createQueuebitClient({ config, logger? })` |
-| Static config | `defineQueuebitConfig()` |
-| Runtime registration | `defineQueuebitRuntime()` plus named source/mapper/processor/completion helpers |
-| Direct jobs | `queuebit.jobs.add/addBulk/get/list/cancel/retryFailed` |
-| BatchRun | `queuebit.runs.start/get/list/listFailures/pause/resume/cancel/retryFailed` |
-| Completion | `queuebit.completions.get/list/retry` |
-| Lifecycle | Host calls `worker.drain()`, `coordinator.drain()`, or `queuebit.close()`; optional CLI role host drains on SIGTERM |
+`createBatchQueue` constructs a Queue; `define` returns a Task; `start` admits a Run; `ctx.next/end` settle a Batch; declared handlers deliver Events. `QueuebitError` carries stable error/outcome fields. Root exports and package metadata are the only import paths.
 
-## Deferred capabilities
+## Version status
 
-v0.1 excludes repeatable/cron jobs, DAG/Flows, Redis Cluster, non-Redis backends, priority, global rate limiter, partition/key ordering, Dashboard/Admin UI, and CDC/unbounded sources. It does not promise exactly-once delivery, strict FIFO, tenant fairness, or automatic rollback of external side effects.
+The current manual describes the unreleased source tree. Historical npm releases do not match it. Existing v01 URLs are retained for discoverability, not compatibility with removed APIs or data.
 
 ## Maintainer entry
 
-Users do not need Redis key/Lua or internal acceptance details. Implementers start at [Architecture](./architecture.md), [Redis model](./redis-model.md), [Internal worker lifecycle](./worker-lifecycle.md), and [Development guardrails](./development-contract.md).
+[Architecture](architecture.md) · [Redis model](redis-model.md) · [Lifecycle](worker-lifecycle.md) · [Qualification](development-contract.md)

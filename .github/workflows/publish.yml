@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Tag qualification (publication disabled)
 
 on:
   push:
@@ -6,77 +6,13 @@ on:
       - "v*"
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: qualification-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-
-      - name: Verify tag matches package.json version
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
-            echo "Tag v${TAG_VERSION} does not match package.json version ${PKG_VERSION}"
-            exit 1
-          fi
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck package
-        run: npm run typecheck
-
-      - name: Run unit and tarball consumer tests
-        run: npm test
-
-      - name: Validate documentation contract and built links
-        run: npm run docs:validate
-
-      - name: Audit dependencies
-        run: npm audit --audit-level=low
-
-      - name: Preview package contents
-        run: npm pack --dry-run --json
-
-      - name: Validate Redis 7.2 target topology
-        run: docker compose -f .github/redis/compose.yml config -q
-
-      - name: Start Redis 7.2 target topology
-        run: docker compose -f .github/redis/compose.yml up -d --wait redis-primary redis-replica sentinel-a sentinel-b
-
-      - name: Run Redis integration, fault, and Sentinel failover matrix
-        run: |
-          docker compose -f .github/redis/compose.yml run --rm \
-            -e QUEUEBIT_REDIS_URL=redis://redis-primary:6379 \
-            -e QUEUEBIT_REDIS_SENTINEL_MASTER=queuebit-primary \
-            -e QUEUEBIT_REDIS_SENTINELS=sentinel-a:26379,sentinel-b:26379 \
-            -e QUEUEBIT_REDIS_SENTINEL_ALLOW_FAILOVER=1 \
-            runner
-
-      - name: Show Redis target logs after a failure
-        if: failure()
-        run: docker compose -f .github/redis/compose.yml logs --no-color
-
-      - name: Clean up Redis target topology
-        if: always()
-        run: docker compose -f .github/redis/compose.yml down --volumes --remove-orphans
-
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  qualify:
+    uses: ./.github/workflows/batch-core.yml
+    # Tag pushes qualify the actual root package only. Publishing requires a separately reviewed release change.

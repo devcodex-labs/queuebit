@@ -1,128 +1,47 @@
 # Check Problems After Launch
 
-<span class="manual-label">Production operations · start from symptoms</span>
+<span class="manual-label">Operations · start from symptoms, then make an explicit control decision</span>
 
-<span id="sc12-observability"></span>
-## First Decide What Kind of Problem It Is
+<span id="sc-diagnostics"></span>
 
-When debugging Queuebit after launch, do not start by memorizing metric names. Start with four questions: is work piling up, are Workers running, is Redis ready, and is a database BatchRun stuck?
+## First decide what kind of problem it is
 
-| Symptom | Inspect first | Usually means |
-|---|---|---|
-| New work is slow or queued | `queue inspect` | Not enough Workers, slow downstream, queue backpressure |
-| Workers are not processing | `workers inspect` | Process down, draining, incompatible config version |
-| API returns 503/429 | `health inspect` / `queue inspect` | Redis unavailable, unsafe Redis policy, queue too full |
-| Database batch is not advancing | `run inspect` / `coordinator inspect` | Slow source, no Worker, result callback failure |
+Separate execution backlog, callback backlog, unready storage and saturated local handlers. Inspect the business audit as well as Queuebit state before repeating work.
 
-The four commands you will use most:
+## What each view answers
 
-```bash
-npx queuebit queue inspect notification --config queuebit.config.ts --json
-npx queuebit workers inspect --queue notification --config queuebit.config.ts --json
-npx queuebit health inspect --config queuebit.config.ts --json
-npx queuebit run inspect <runId> --config queuebit.config.ts --json
-```
-
-## What Each View Answers
-
-```bash
-npx queuebit queue inspect notification --config queuebit.config.ts --json
-npx queuebit workers inspect --queue notification --config queuebit.config.ts --json
-npx queuebit coordinator inspect --config queuebit.config.ts --json
-npx queuebit health inspect --config queuebit.config.ts --json
-```
-
-| View | Read first | Answers |
-|---|---|---|
-| Queue | waiting/active/delayed/retrying/failed, `oldestWaitingMs`, jobs/bytes watermarks | Which state is accumulating work? |
-| Workers | ready/draining, concurrency, activeJobs, heartbeat, version | Are enough compatible Workers available? |
-| Coordinator | active Runs, cursors, inFlightBatches, dispatchHoldReason, source/completion errors | Why is database batching paused or slow? |
-| Health | ready/degraded/not_ready/draining plus checks | Are Redis, policy, and role leases safe? |
-
-## Capacity: Start with Rough Math
-
-```text
-total Worker concurrency = sum(concurrency of all ready Workers)
-maximum records in flight per Run = pageSize * maxInFlightBatches
-job start rate ~= total Worker concurrency / average processing time
-```
-
-This is only a debugging starting point, not a replacement for load testing. One database record may create multiple jobs, payloads may be large, and downstream quotas may be lower than Worker capacity, so also check actual job count, serialized bytes, downstream limits, and Redis capacity.
-
-From application code, `queuebit.capacity.snapshot()` reads jobs/bytes watermarks for declared Queues. Use CLI inspect for human debugging and `capacity.snapshot()` for readiness checks, dashboards, or local alert evaluation.
-
-## Backpressure: When Work Is Rejected and When It Recovers
-
-Backpressure is Queuebit's capacity guard: when a queue is too full, Queuebit rejects new work until the queue drops below the recovery watermark.
-
-```mermaid
-stateDiagram-v2
-  [*] --> accepting
-  accepting --> backpressured: jobs >= high OR bytes >= high
-  backpressured --> backpressured: one dimension above low
-  backpressured --> accepting: jobs <= low AND bytes <= low
-  accepting --> rejectedLarge: request delta itself >= high
-```
-
-Temporary lack of capacity returns retryable `QB_BACKPRESSURE_REJECTED`. A request that is itself too large returns non-retryable `QB_BACKPRESSURE_REQUEST_TOO_LARGE`; reduce page, bulk size, fan-out, or payload instead of waiting for it to recover.
-
-BatchRun can pause with `dispatchHoldReason` values such as `interval`, `in_flight_limit`, `backpressure`, `no_active_worker`, or `redis_reconnecting`. These are automatic wait reasons. They clear when conditions improve, require no manual resume, and consume no source/dispatch retry.
-
-## Metrics: Start with the Few That Answer Questions
-
-With default `observability.metrics.prefix=queuebit_`, start with these process-local samples to answer whether work is arriving, being processed, failing, and whether roles are alive:
-
-| Metric suffix | Use first for |
+| View | Purpose |
 |---|---|
-| `jobs_submitted_total` / `job_data_bytes_submitted_total` | Producer submit volume and payload growth |
-| `worker_jobs_claimed_total` / `worker_jobs_completed_total` / `worker_jobs_failed_total` | Worker consumption, success, and failure |
-| `worker_job_duration_ms_count` / `worker_job_duration_ms_sum` | Average processing time |
-| `worker_job_attempts_total` / `worker_stalled_jobs_recovered_total` | Retry volume and Worker takeover |
-| `role_heartbeats_total` / `role_drain_requests_observed_total` | Worker/Coordinator liveness and rolling shutdown |
-| `coordinator_runs_advanced_total` / `coordinator_jobs_created_total` | BatchRun advancement and job creation |
-| `completion_events_delivered_total` | Result callback delivery |
+| `task.get(runId)` | Full retained query/state/error and execution/callback progress |
+| `operator.runs.getMetadata(runId)` | Bounded diagnostic fields without business payload |
+| `operator.runs.list({limit,cursor})` | Live bounded Run listing |
+| `operator.deadLetters.get/list` | Retained dead-letter/replay metadata |
+| `operator.health.snapshot()` | Local lifecycle plus bounded Redis/member/backlog observations |
+| `operator.capacity.snapshot()` | Shared logical charges, counts and admission pressure |
+| `operator.metrics.snapshot()` | Local counters and telemetry loss, not global totals |
 
-Queuebit core provides an in-process registry, Prometheus rendering, `observabilityHttp.handle()` response helpers, and `alerts.evaluate()` local findings. It does not start an HTTP server; your application mounts, authenticates, and network-isolates health/metrics endpoints.
+List pages default to50/max200 items. Cursors have fixed15-minute expiry and bind filters and the first page's upper sequence. Pages are live, not snapshots: changes can shorten a page, and a short page can still have nextCursor. Do not stop until nextCursor is null.
 
-Some operational views currently come from CLI inspect or `capacity.snapshot()` rather than dedicated Prometheus series:
+## Control a Run
 
-| What you want to see | How to cover it today |
-|---|---|
-| Queue depth by state | `queue inspect` state samples + capacity counters |
-| Oldest waiting age | `queue inspect` `oldestWaitingMs` |
-| BatchRun / completion backlog | `run` / `completion` inspect + coordinator metrics |
-| Role lease validity | `workers` / `coordinator` inspect heartbeats |
+<span id="sc-control"></span>
 
-Do not treat older planned metric names from draft dashboards as currently exported Prometheus series.
+Read fresh metadata, authenticate the operator and persist a command identity. Send `{ runId, expectedRevision, reason, commandId }` to pause/resume/cancel. Pause can wait for an in-flight page; cancel cannot undo external writes. Results are applied/noop/not_found; not_found has no fabricated revision.
 
-## Alerts: Start with a Small Rule Set
+On REVISION_CONFLICT inspect current state before deciding a new command. On OUTCOME_UNKNOWN retry the same full command identity or reconcile its effect; do not convert an uncertain result into a new command. A shared parent-Run ring retains at most32 command receipts for24 hours, with an encoded receipt limit of2KiB. It is not permanent command deduplication.
 
-| Alert | Window | First action |
-|---|---|---|
-| Oldest waiting above business SLO | 5 to 15 minutes | Check Worker capacity, downstream latency, and backpressure |
-| Stalled recoveries rising | Rate over time | Check Worker crashes, event loop, renewal, and Redis latency |
-| Completion failed > 0 | Immediate | Repair handler/downstream and retry only the completion event |
-| `role_lease_valid=0` with pending work | More than two lease windows | Check candidate processes, domain, and Redis connection |
-| Server policy degraded/not_ready | Immediate | Stop new work and repair noeviction, persistence, or role |
-| Queue bytes near high | Trend | Reduce page, fan-out, or payload and verify Redis capacity |
+## Capacity and backpressure
 
-Thresholds come from business SLOs and load tests. A non-empty queue alone is not an incident.
+Logical capacity prepays settlement/Event dependencies and is not Redis RSS. Admission stops at high thresholds and resumes below low thresholds; valid in-flight work, controls and bounded maintenance continue draining. Investigate unfinished callbacks, retained Runs, matching consumers and stuck physical slots before raising infrastructure capacity. Do not edit counters or rebuild indexes manually.
 
-`queuebit.alerts.evaluate()` can be the starting point for smoke checks, simple probes, and default dashboards. Production thresholds should still live in your monitoring system, with every Producer, Worker, and Coordinator process scraped and aggregated.
+## Metrics and alerts
 
-Completion retention is controlled separately by `retention.completionEvents.ageMs/maxCount`. Delivered or not-required Completion events can be removed after their parent Run is terminal; pending, retrying, delivering, or failed Completion events remain available for recovery and alerting.
+Collect namespace, task/version, runId/eventId, commandId, operation and error outcomeKnown where relevant. Telemetry is bounded and may drop records; its failure cannot roll back work. Choose alert thresholds from your workload SLO and load test, not universal latency numbers.
 
-## Log Correlation Keys
+## Graceful shutdown
 
-Use `namespace`, `queue`, `runId`, `batchId`, `jobId`, `eventId`, `attempt`, `leaseGeneration`, `workerId`, `coordinatorId`, `advancementOwnerId`, and `errorCode`.
+Stop application request admission, await `queue.close()`, then inspect timedOut/remainingExecutions/remainingCallbacks. A handler that ignores abort can remain alive after close. The service owner must decide any process termination; Queuebit does not kill processes.
 
-Do not log full input, job data, results, Redis credentials, or sensitive business payloads by default.
+## Next
 
-## Graceful Shutdown: Stop Workers During Releases
-
-```bash
-npx queuebit worker drain --queue notification --worker-id worker-a --reason rolling-release --config queuebit.config.ts
-npx queuebit coordinator drain --coordinator-id coordinator-a --reason rolling-release --config queuebit.config.ts
-```
-
-Remote drain commands only tell the target process to prepare for shutdown; they do not wait until it has fully stopped. An SDK service host calls `worker.drain()`, `coordinator.drain()`, or `queuebit.close()` from its own shutdown lifecycle; Queuebit does not install a signal handler. Only the optional CLI role host drains automatically on SIGTERM. Each host uses its configured drain timeout. On timeout, it stops renewing and reports failure without inventing a business success or failure state.
+[Incident recovery](failure-runbooks.md) · [Configuration](configuration-recipes.md)

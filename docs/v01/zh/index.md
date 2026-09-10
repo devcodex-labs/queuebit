@@ -2,42 +2,42 @@
 pageType: home
 hero:
   name: queuebit
-  text: Redis-backed Node 任务队列
-  tagline: 安装模块，传入 Redis 配置，注册一个 processor；业务代码调用 jobs.add，把耗时动作交给后台 Worker。
+  text: Node.js 持久批处理
+  tagline: 将固定业务快照分页执行，在 Redis 保存恢复进度，并安全投递回调。
   actions:
     - theme: brand
-      text: 先跑一个后台任务
+      text: 开始第一个批处理
       link: /zh/quick-start.html
     - theme: alt
-      text: 看单任务用法
-      link: /zh/job-recipes.html
+      text: 分页处理业务记录
+      link: /zh/batch-runs.html
     - theme: alt
-      text: 看学习路径
+      text: 了解任务与快照
       link: /zh/concepts.html
 features:
-  - title: 第一个任务只需要五步
-    details: 安装、配置 Redis、写 processor、调用 jobs.add、启动 Worker 后 inspect job。
+  - title: 从真实快照开始
+    details: 安装本地根包、连接 Redis、注册收据任务、注入持久适配器并查看 Run 结果。
     link: /zh/quick-start.html
-  - title: 普通任务只用 jobs.add
-    details: Web/API 提交一个 payload，Worker 执行同名 processor；先不学 BatchRun。
+  - title: 有限工作使用统一任务
+    details: 接收有限 query，由托管消费者从已提交状态逐页推进。
     link: /zh/job-recipes.html
-  - title: 常用能力逐步打开
-    details: 需要时再加重试、超时、延时、幂等和取消，不挡第一次接入。
+  - title: 随任务需求逐步学习
+    details: 理解有限重试、协作超时、业务幂等和运维控制。
     link: /zh/concepts.html
-  - title: 批量数据库记录是进阶场景
-    details: 只有需要持续分页、每批完成、最终完成和恢复时，才使用 BatchRun。
+  - title: 分页有界，进度可恢复
+    details: 冻结输入成员与数据，幂等写入，每页完成后提交 keyset 游标。
     link: /zh/batch-runs.html
-  - title: 多 Worker 是扩容手段
-    details: 单 Worker 跑通后，再用多个进程共享 Redis 和 queue 提高吞吐。
+  - title: 扩容独立消费者
+    details: 共享 namespace 和不可变合同，按下游容量配置本地执行与回调槽。
     link: /zh/distributed-workers.html
-  - title: vext 只是一个宿主
-    details: vext Web 创建任务；Worker 仍然是独立后台进程。
+  - title: 框架负责自身生命周期
+    details: 应用负责认证、生命周期和托管，不需要框架专用适配器。
     link: /zh/vext-integration.html
-  - title: 出问题再看运维
-    details: 生产部署、容量、告警、故障恢复放在生产运维组，不挡首次接入路径。
+  - title: 运维知识按需查阅
+    details: 部署、容量、告警与故障恢复位于运行恢复分区，不挤占首次使用路径。
     link: /zh/failure-runbooks.html
 ---
 
-<span class="manual-label">首页 · v0.1 用户手册</span>
+<span class="manual-label">首页 · BatchQueue 用户手册</span>
 
-> **发布状态：** 本站描述 v0.1 计划提供的使用方式。安装前请先核对当前 npm 包版本和 README 发布说明；如果示例提示能力尚未发布，以提示为准。
+> **发布状态：** 本手册对应当前未发布的 BatchQueue 源码。请安装本地根 tarball，npm 历史版本不提供该接口；保留 v01 页面地址不表示兼容旧 API。

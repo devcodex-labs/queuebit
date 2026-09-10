@@ -1,0 +1,66 @@
+name: Batch v2 qualification
+
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  batch-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.23.2', '24.17.0']
+    env:
+      QUEUEBIT_BATCH_REDIS_BINARY: ${{ runner.temp }}/queuebit-redis/root/usr/bin/redis-server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix website ci
+      - name: Extract verified Redis 7.2.16 without changing system services
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/queuebit-redis/root"
+          cd "$RUNNER_TEMP/queuebit-redis"
+          curl --fail --location --retry 3 --output tools.deb 'https://packages.redis.io/deb/pool/noble/r/re/redis-tools_7.2.16-1rl1~noble1_amd64.deb'
+          curl --fail --location --retry 3 --output server.deb 'https://packages.redis.io/deb/pool/noble/r/re/redis-server_7.2.16-1rl1~noble1_amd64.deb'
+          printf '%s  tools.deb\n' '57948eb1c0b26f9ff872ff4bfcc569dc9780b4d5cf08031757da177eb827459c' | sha256sum --check --strict
+          printf '%s  server.deb\n' '837eec5be43cd24a58563d763394bee04ccf5d7a25d206718d578a465f8b80ff' | sha256sum --check --strict
+          dpkg-deb --extract tools.deb root
+          dpkg-deb --extract server.deb root
+          "$QUEUEBIT_BATCH_REDIS_BINARY" --version
+      - name: Run all required core, fresh package, TLS, three-Sentinel, example and documentation qualifications
+        run: npm test
+      - name: Confirm every owned fixture released its service port
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module -e '
+          import { readdir, readFile } from "node:fs/promises";
+          const root = "../.devcodex/queuebit/.tmp";
+          const entries = await readdir(root, { withFileTypes: true }).catch(error => { if (error.code === "ENOENT") return []; throw error; });
+          for (const entry of entries.filter(value => value.isDirectory() && value.name.startsWith("batch-topology-"))) {
+            const evidence = JSON.parse(await readFile(`${root}/${entry.name}/topology-evidence.json`, "utf8"));
+            if (!evidence.cleanupVerified || evidence.services.some(service => !service.stopped || !service.portReleased)) throw Error(`Unreleased topology: ${entry.name}`);
+          }
+          for (const entry of entries.filter(value => value.isDirectory() && value.name.startsWith("batch-redis-"))) {
+            const directory = `${root}/${entry.name}`;
+            for (const name of (await readdir(directory)).filter(value => value === "service.json" || /^(worker-|proxy-).+\.json$/.test(value))) {
+              const receipt = JSON.parse(await readFile(`${directory}/${name}`, "utf8"));
+              const unownedCollision = receipt.portOwnership === "not-acquired" && receipt.failure?.code === "TEST_REDIS_PORT_COLLISION" && receipt.portReleased === null;
+              if (receipt.stopped !== true || (name !== "service.json" && name.startsWith("worker-") ? false : !unownedCollision && receipt.portReleased !== true)) throw Error(`Unreleased fixture: ${directory}/${name}`);
+            }
+          }'

@@ -2,9 +2,10 @@
 
 | Path | Status | Use |
 |------|--------|-----|
-| **[`v01/`](./v01/)** | **Canonical** | v0.1 bilingual final-user contract (`v01/zh`, `v01/en`) |
-| [`en/`](./en/) | **Deprecated** | Historical English mirror — see [en/README.md](./en/README.md) |
-| [`zh/`](./zh/) | **Deprecated** | Historical Chinese mirror — see [zh/README.md](./zh/README.md) |
-| [`public/`](./public/) | Assets | Shared static assets |
+| [v01/en/index.md](./v01/en/index.md) | Current English manual | BatchQueue v2 user tasks and reference |
+| [v01/zh/index.md](./v01/zh/index.md) | 当前中文手册 | BatchQueue v2 使用任务与参考 |
+| [public/](./public/) | Assets | Shared static assets |
 
-**Do not** treat `docs/en` or `docs/zh` as the integration or production contract. Start at the project [README.md](../README.md) or [`v01/en/index.md`](./v01/en/index.md) / [`v01/zh/index.md`](./v01/zh/index.md).
+The `v01` path is retained for existing page URLs, not legacy API compatibility. The former `docs/en` and `docs/zh` mirrors are retired. This manual describes the unreleased source tree; install the local root tarball, not a historical npm release.
+
+Start at the project [README.md](../README.md). User tasks lead the navigation; API/configuration and operations reference follow them. Architecture, storage internals and qualification are explicitly marked maintainer material and come last.

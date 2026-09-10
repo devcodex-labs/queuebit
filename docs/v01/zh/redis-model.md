@@ -1,65 +1,33 @@
 # Redis 模型与原子不变式
 
-<span class="manual-label">Maintainer · 内部存储合同</span>
-
-这页解释 Queuebit 如何在 Redis 里保持状态一致。普通使用者不要依赖这里的 key 或模型；接入、排查和恢复都只使用公开 API/CLI。
+<span class="manual-label">维护者资料 · 内部存储合同，不是公开命令 API</span>
 
 ## 用户边界
 
-公开 API/CLI 是唯一支持的查询和恢复入口。Redis key 不是用户 API，不允许通过手工修改 key 完成 cancel/retry/recovery。
-
-生产 API 不扫描任意 Redis keyspace 来完成用户操作。目标测试 harness 只允许用 `SCAN qb:{namespace}:*` 清理本次测试创建的唯一 namespace；Queuebit 文档、CLI 和恢复流程都不得依赖 `FLUSHDB`、`FLUSHALL`、全局 `SCRIPT FLUSH` 或手工改 key。
+使用者通过 BatchQueue 操作，不直接改 key。内部前缀为 qb:batch:v1:{namespace}:，不迁移/消费旧前缀。启动仅用 MATCH 限定精确新namespace 的有限 SCAN 检测孤儿状态，没有旧key扫描。
 
 ## 概念 keyspace
 
-| 类别 | 内容 | 主要索引 |
-|---|---|---|
-| Queue | waiting/active/delayed/retrying/terminal、jobs/bytes watermark latch | queue + state + due/sequence |
-| Job | data/options/attempt/lease generation/owner/result/error/parent identity | jobId、dedup digest |
-| Run | definition/version/input digest/boundary/dispatch/checkpoint/source exhausted/summary | runId、definition/state/created sequence |
-| Batch | index/cursor range/record summary/jobs/execution/completion | runId + batch index |
-| Failure envelope | mapper record 或 processor job 重放信息 | runId + failure sequence |
-| Completion event | type/attempt/delivery generation/handler/summary/error | event sequence + run/batch/state |
-| Role lease | Worker/Coordinator/time owner identity、generation、expiry | role/domain |
-| Tombstone | detail 清理后的 identity/digest/version/state | dedup key TTL |
-
-具体 key 命名在实现阶段冻结，但必须使用 hash tag 或等价的单主原子边界保证相关状态一起提交。v0.1 不支持 Redis Cluster，不因 key 分片而削弱原子契约。
+namespace metadata绑定schema/protocol，definition绑定任务身份。Run持有不可变query和已提交state；索引支持有限live列表和到期/租约处理。Event保存不可变结算快照、独立投递状态和保护父数据的引用。runtime member有独立上限，不是持久业务身份。
 
 ## 必须原子的转换
 
-- Job add/addBulk/dedup/backpressure 计数。
-- waiting/delayed/retrying -> active claim。
-- active -> completed/retrying/failed + Batch summary。
-- lease expiry -> stalled reclaim generation。
-- Run boundary + initial dispatch/checkpoint cursor。
-- source page -> Batch/jobs/envelopes/dispatchCursor。
-- Batch 屏障 -> checkpoint 连续前缀级联推进。
-- source exhausted marker + Run 终态评估。
-- completion claim/settle/retry generation。
-- pause/resume/cancel/recovery identity 幂等。
+静态Lua所有key均通过KEYS显式传入，租约/token/revision约束claim/renew/settlement。部分对象或索引不一致时拒绝，不能变成可执行工作。容量预付后续结算/Event空间，拒绝不安全新接收时仍允许合法排空。
 
 ## Canonical input
 
-`qbcj-v1` 只接受 JSON 可序列化值；对象键递归按 Unicode code point 排序，数组保序，字符串 UTF-8，保存 version + SHA-256 digest。`undefined`、函数、symbol、BigInt、NaN/Infinity、循环引用在入 Redis 前失败。
+存储前验证JSON，规范身份保留允许字符串/数字/数组/对象的精确语义。query/state/error有编码上限。业务键采用合法Unicode，不trim/normalize。
 
-## Retention 与不可删除状态
+## 保留与不可删除状态
 
-- active/waiting/delayed/retrying 和 execution 非终态 work 不清理。
-- Run 或任一后代 Batch completion 未到 `not_required/delivered` 时不清理。
-- `completionState=failed` event 不静默删除，必须告警并显式 retry。
-- failedWork 清理后 Run 显示 recovery data expired。
-- detail 在 dedup TTL 前清理时保留紧凑 tombstone，直到 key TTL 结束。
-- Runtime M2K `retention.purge()` 是安全本地 Job/Run/Completion foundation：它读取已声明 queue 的 `completed` 索引、terminal Run detail index 和 Completion detail index，默认 dry-run，删除没有 identity 引用的 direct completed Job，把 deduplication/idempotency/replacement 绑定的 direct completed Job 压缩为 `detailsExpired=true` tombstone，也会把 completion 为 `not_required` 或 `delivered` 的 age-expired 或超过 maxCount 窗口的 terminal Run 压缩为 tombstone，并用独立 `completionEvents.ageMs/maxCount` 在父 Run 已终态后压缩 delivered/not_required Completion event。Run 压缩会删除 input/boundary/cursors 与 failure replay envelope，同时保留 identity 和 summary counters，然后从 terminal detail index 移除，避免 tombstone 继续占用 `terminalRuns.maxCount`。Completion 压缩会删除 `summary`、backoff/error、due 和 delivery lease 详情，同时保留 event identity 与 `summaryDigest`，并从 Completion detail index 移除，避免 tombstone 继续占用 `completionEvents.maxCount`；稳定 Completion event index 继续支持 `completions.list/get` 读取 tombstone identity。它仍会跳过非终态 work、pending/retrying/delivering/failed completion event、父 Run 未终态的 Completion event、BatchRun-owned job cleanup 和目标 Redis 清理证据。
+未完成正常回调和合法冻结replay排空保护依赖。死信期限锚定firstDeadAt，不随replay延长。GC先去除计费和引用，再回收符合条件的Run/query/幂等/definition。没有永久墓碑或自动整namespace清理。
 
-## Server policy
-
-strict preflight 核对 noeviction、persistence 状态、primary/replica role、复制连接/延迟和最近 persistence error。Sentinel failover 后重做检查。不可读 policy 是 unknown/not_ready，不能推断 healthy。
+不能把 FLUSHDB、FLUSHALL 或手工删除metadata/index当库修复步骤。生命周期方法不清旧数据，恢复须走明确运维决策。
 
 ## 验证矩阵
 
-- 并发 claim 只有一个 owner。
-- 旧 Worker/Coordinator/time/completion generation 晚提交被拒绝。
-- 页提交失败不只推进 cursor。
-- paced Batch 乱序完成不跳 checkpoint。
-- addBulk 校验/背压失败时无部分 jobs。
-- retention 不删 active 或未交付 completion，tombstone 保持去重冲突。
+在真实Redis验证CAS/token竞态、不确定回复、部分索引、有限内存、容量、Event/Run关联、期限排空与清理。根包测试另预置旧key，确认零旧key命令且新key有实际流量。
+
+## 下一步
+
+[运行时生命周期](worker-lifecycle.md) · [验证](development-contract.md)
